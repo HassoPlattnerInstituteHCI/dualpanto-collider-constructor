@@ -158,8 +158,8 @@ function createTunnel(sketch, segIdx, hw, height, miterMap) {
     if (len < 0.001) return null;
     
     const dir = { x: dx / len, y: dy / len };
-    const left = perp(dir);  // 90 CCW
-    const right = perp(left); // 90 CW (or -90 CCW)
+    const perpL = perp(dir);  // 90 CCW (left perpendicular)
+    const perpR = perp(perpL); // 90 CW (right perpendicular)
     const halfW = hw / 2;
     
     // Check if endpoints are intersections
@@ -173,8 +173,8 @@ function createTunnel(sketch, segIdx, hw, height, miterMap) {
     const endMiter = isEndIntersect && miterMap[s.end] ? miterMap[s.end][segIdx] : null;
     
     // Offset points
-    const offsetL = v2Scale(left, halfW);
-    const offsetR = v2Scale(right, halfW);
+    const offsetL = v2Scale(perpL, halfW);
+    const offsetR = v2Scale(perpR, halfW);
     
     // Start side offset points
     let sl, sr; // start-left, start-right
