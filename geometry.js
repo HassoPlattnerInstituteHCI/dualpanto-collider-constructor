@@ -1,4 +1,5 @@
-// geometry.js - CSG-Based 3D Extrusion with Proper Mitered Joints
+// geometry.js - 3D Extrusion with Miter Joints
+// Standard miter joint: two offset lines meet at a point at angle bisector
 
 function computeBoundingBoxWithMargin(sketch, margin) {
     if (sketch.points.length === 0) {
@@ -28,19 +29,14 @@ function createCSGCube(centerX, centerY, centerZ, width, depth, height) {
 }
 
 // ============================================================================
-// MITER JOINT CALCULATION
+// 2D OFFSET WITH STANDARD MITER JOINTS
 // ============================================================================
 
 /**
- * Calculate miter point for two line segments meeting at a point
- * The miter point is where the outer offset lines would intersect
- * @param {Object} p - Intersection point {x, y}
- * @param {Object} dir1 - Direction vector of first segment AWAY from p
- * @param {Object} dir2 - Direction vector of second segment AWAY from p
- * @param {number} offset - Offset distance (hallwayWidth/2)
- * @returns {Object|null} - Miter point {x, y}, or null if angle is too small
+ * Calculate miter point for outer corner of two segments meeting at angle theta
+ * Distance from corner to miter point = offset / sin(theta/2)
  */
-function calculateMiterPoint(p, dir1, dir2, offset) {
+function calcMiter(p, dir1, dir2, offset) {
     const len1 = Math.hypot(dir1.x, dir1.y);
     const len2 = Math.hypot(dir2.x, dir2.y);
     if (len1 < 0.001 || len2 < 0.001) return null;
@@ -48,234 +44,206 @@ function calculateMiterPoint(p, dir1, dir2, offset) {
     const u1 = { x: dir1.x / len1, y: dir1.y / len1 };
     const u2 = { x: dir2.x / len2, y: dir2.y / len2 };
     
-    // Angle between the two directions
+    // Cosine of angle between vectors
     const cosTheta = u1.x * u2.x + u1.y * u2.y;
-    const sinTheta = Math.abs(u1.x * u2.y - u1.y * u2.x);
-    const theta = Math.atan2(sinTheta, cosTheta);
+    // Avoid numerical issues
+    const cosThetaClamped = Math.max(-1, Math.min(1, cosTheta));
+    const theta = Math.acos(cosThetaClamped);
     
-    // For the miter, we use the formula: distance = offset / sin(theta/2)
     const sinHalfTheta = Math.sin(theta / 2);
-    
-    if (sinHalfTheta < 0.001) {
-        // Parallel segments - miter would be infinite
-        return null;
-    }
+    if (sinHalfTheta < 0.001) return null; // Nearly parallel
     
     const miterDist = offset / sinHalfTheta;
+    if (miterDist > offset * 50) return null; // Limit miter length
     
-    // Limit miter length to avoid extremely long miters for small angles
-    if (miterDist > offset * 50) {
-        return null;
-    }
+    // Bisector direction (points INTO the angle)
+    const bisex = { x: u1.x + u2.x, y: u1.y + u2.y };
+    const bisexLen = Math.hypot(bisex.x, bisex.y);
+    if (bisexLen < 0.001) return null; // Opposite directions
     
-    // Angle bisector direction (unit vector)
-    // The bisector of u1 and u2 is (u1 + u2) / |u1 + u2|
-    const bisexX = u1.x + u2.x;
-    const bisexY = u1.y + u2.y;
-    const bisexLen = Math.hypot(bisexX, bisexY);
-    
-    if (bisexLen < 0.001) {
-        // Opposite directions (180 degrees)
-        return null;
-    }
-    
-    // The bisector points INTO the angle. For the OUTER miter,
-    // we need to go in the OPPOSITE direction (away from the angle)
+    // For OUTER miter, go in opposite direction of bisector
     return {
-        x: p.x - (bisexX / bisexLen) * miterDist,
-        y: p.y - (bisexY / bisexLen) * miterDist
+        x: p.x - (bisex.x / bisexLen) * miterDist,
+        y: p.y - (bisex.y / bisexLen) * miterDist
     };
 }
 
 /**
  * Get all segments connected to a point
  */
-function getSegmentsAtPoint(sketch, pointIndex) {
-    const segments = [];
-    sketch.segments.forEach((seg, idx) => {
-        if (seg.start === pointIndex || seg.end === pointIndex) {
-            segments.push(idx);
-        }
+function getSegmentsAtPoint(sketch, ptIdx) {
+    const segs = [];
+    sketch.segments.forEach((s, i) => {
+        if (s.start === ptIdx || s.end === ptIdx) segs.push(i);
     });
-    return segments;
+    return segs;
 }
 
 /**
- * Get the direction vector from a point along a segment (away from the point)
+ * Get direction vector from point ptIdx along segment segIdx
  */
-function getSegmentDirectionFrom(sketch, segIndex, fromPointIndex) {
-    const seg = sketch.segments[segIndex];
-    const otherIndex = seg.start === fromPointIndex ? seg.end : seg.start;
-    const other = sketch.points[otherIndex];
-    const from = sketch.points[fromPointIndex];
-    return { x: other.x - from.x, y: other.y - from.y };
+function getDirFrom(sketch, segIdx, ptIdx) {
+    const s = sketch.segments[segIdx];
+    const otherIdx = s.start === ptIdx ? s.end : s.start;
+    const other = sketch.points[otherIdx];
+    const pt = sketch.points[ptIdx];
+    return { x: other.x - pt.x, y: other.y - pt.y };
 }
 
 /**
- * For each intersection, pre-calculate miter points
- * Returns a map: miterPoints[pointIndex][segmentIndex] = {leftMiter: point, rightMiter: point}
+ * Calculate miter points for all intersections
+ * Returns: miterMap[ptIdx][segIdx] = { left: point, right: point }
  */
-function calculateAllMiterPoints(sketch, hallwayWidth) {
-    const halfW = hallwayWidth / 2;
-    const miterMap = {}; // miterMap[pointIndex] = {segIndex: {leftMiter: {...}, rightMiter: {...}}}
+function calcAllMiters(sketch, hw) {
+    const halfW = hw / 2;
+    const map = {};
     
-    sketch.points.forEach((p, pIndex) => {
-        const segments = getSegmentsAtPoint(sketch, pIndex);
-        if (segments.length < 2) return;
+    sketch.points.forEach((p, pIdx) => {
+        const segs = getSegmentsAtPoint(sketch, pIdx);
+        if (segs.length < 2) return;
         
-        // Get direction vectors (away from p) for each segment
-        const directions = segments.map(segIndex => 
-            getSegmentDirectionFrom(sketch, segIndex, pIndex)
-        );
+        const dirs = segs.map(s => getDirFrom(sketch, s, pIdx));
+        const angles = dirs.map(d => Math.atan2(d.y, d.x));
         
-        // Calculate angles and sort segments in CCW order
-        const segmentAngles = segments.map((segIndex, i) => {
-            const d = directions[i];
-            return Math.atan2(d.y, d.x);
-        });
-        
-        const sorted = segments.map((segIndex, i) => ({ segIndex, angle: segmentAngles[i] }))
+        // Sort segments by angle (CCW order)
+        const sorted = segs.map((s, i) => ({ seg: s, angle: angles[i] }))
             .sort((a, b) => a.angle - b.angle);
         
-        // For each consecutive pair in the sorted order, calculate the outer miter
         for (let i = 0; i < sorted.length; i++) {
             const j = (i + 1) % sorted.length;
-            const seg1 = sorted[i].segIndex;
-            const seg2 = sorted[j].segIndex;
+            const s1 = sorted[i].seg;
+            const s2 = sorted[j].seg;
+            const d1 = dirs[segs.indexOf(s1)];
+            const d2 = dirs[segs.indexOf(s2)];
             
-            // Get the directions in sorted order
-            const dir1 = directions[segments.indexOf(seg1)];
-            const dir2 = directions[segments.indexOf(seg2)];
-            
-            const miter = calculateMiterPoint(p, dir1, dir2, halfW);
-            
-            // Store this miter point
-            // For seg1, this is the "right" miter (CCW side)
-            // For seg2, this is the "left" miter (CW side)
-            if (!miterMap[pIndex]) miterMap[pIndex] = {};
-            if (!miterMap[pIndex][seg1]) miterMap[pIndex][seg1] = {};
-            if (!miterMap[pIndex][seg2]) miterMap[pIndex][seg2] = {};
-            
-            miterMap[pIndex][seg1].rightMiter = miter;
-            miterMap[pIndex][seg2].leftMiter = miter;
+            const miter = calcMiter(p, d1, d2, halfW);
+            if (miter) {
+                if (!map[pIdx]) map[pIdx] = {};
+                if (!map[pIdx][s1]) map[pIdx][s1] = {};
+                if (!map[pIdx][s2]) map[pIdx][s2] = {};
+                map[pIdx][s1].right = miter;  // s1's right side connects to miter
+                map[pIdx][s2].left = miter;   // s2's left side connects to miter
+            }
         }
     });
     
-    return miterMap;
+    return map;
 }
 
-/**
- * Get perpendicular vector (90 degree rotation counter-clockwise)
- */
-function perpVec(x, y) {
-    return { x: -y, y: x };
-}
+// ============================================================================
+// 3D TUNNEL CREATION WITH MITERED ENDS
+// ============================================================================
 
 /**
- * Scale a vector
+ * Create perpendicular vector (90 deg CCW)
  */
-function scaleVec(v, s) {
-    return { x: v.x * s, y: v.y * s };
+function perp(v) {
+    return { x: -v.y, y: v.x };
 }
 
-/**
- * Add two vectors
- */
-function addVec(v1, v2) {
-    return { x: v1.x + v2.x, y: v1.y + v2.y };
-}
+function v2Add(a, b) { return { x: a.x + b.x, y: a.y + b.y }; }
+function v2Scale(v, s) { return { x: v.x * s, y: v.y * s }; }
 
 /**
- * Create a tunnel prism with mitered ends
- * For each segment endpoint that is an intersection:
- * - One side wall ends at the intersection point (inner wall)
- * - The other side wall ends at the outer miter point
+ * Create a mitered tunnel for one segment
  */
-function createTunnelPrism(sketch, segIndex, hallwayWidth, height, miterMap) {
-    const seg = sketch.segments[segIndex];
-    const p1 = sketch.points[seg.start];
-    const p2 = sketch.points[seg.end];
+function createTunnel(sketch, segIdx, hw, height, miterMap) {
+    const s = sketch.segments[segIdx];
+    const p1 = sketch.points[s.start];
+    const p2 = sketch.points[s.end];
     
     const dx = p2.x - p1.x;
     const dy = p2.y - p1.y;
-    const length = Math.hypot(dx, dy);
+    const len = Math.hypot(dx, dy);
+    if (len < 0.001) return null;
     
-    if (length < 0.001) return null;
-    
-    // Unit direction vector
-    const dir = { x: dx / length, y: dy / length };
-    // Unit perpendicular vectors
-    const perpLeft = perpVec(dir.x, dir.y);  // 90° CCW
-    const perpRight = perpVec(perpLeft.x, perpLeft.y); // 90° CW (same as -90° CCW)
-    
-    const halfW = hallwayWidth / 2;
-    const halfH = height / 2;
-    const midZ = height / 2;
+    const dir = { x: dx / len, y: dy / len };
+    const left = perp(dir);  // 90 CCW
+    const right = perp(left); // 90 CW (or -90 CCW)
+    const halfW = hw / 2;
     
     // Check if endpoints are intersections
-    const startSegments = getSegmentsAtPoint(sketch, seg.start);
-    const endSegments = getSegmentsAtPoint(sketch, seg.end);
-    const isStartIntersection = startSegments.length > 1;
-    const isEndIntersection = endSegments.length > 1;
+    const startSegs = getSegmentsAtPoint(sketch, s.start);
+    const endSegs = getSegmentsAtPoint(sketch, s.end);
+    const isStartIntersect = startSegs.length > 1;
+    const isEndIntersect = endSegs.length > 1;
     
-    // Get miter points for this segment
-    const startMiters = isStartIntersection && miterMap[seg.start] ? miterMap[seg.start][segIndex] : null;
-    const endMiters = isEndIntersection && miterMap[seg.end] ? miterMap[seg.end][segIndex] : null;
+    // Get miter points for this segment's ends
+    const startMiter = isStartIntersect && miterMap[s.start] ? miterMap[s.start][segIdx] : null;
+    const endMiter = isEndIntersect && miterMap[s.end] ? miterMap[s.end][segIdx] : null;
     
-    // Calculate offset points at start
-    let startLeftPt, startRightPt;
-    if (isStartIntersection && startMiters) {
-        // At intersection: use miter points if available, else use offset
-        startLeftPt = startMiters.leftMiter || addVec(p1, scaleVec(perpLeft, halfW));
-        startRightPt = startMiters.rightMiter || addVec(p1, scaleVec(perpRight, halfW));
+    // Offset points
+    const offsetL = v2Scale(left, halfW);
+    const offsetR = v2Scale(right, halfW);
+    
+    // Start side offset points
+    let sl, sr; // start-left, start-right
+    if (isStartIntersect && startMiter) {
+        sl = startMiter.left || v2Add(p1, offsetL);
+        sr = startMiter.right || v2Add(p1, offsetR);
     } else {
-        // Simple offset at start
-        startLeftPt = addVec(p1, scaleVec(perpLeft, halfW));
-        startRightPt = addVec(p1, scaleVec(perpRight, halfW));
+        sl = v2Add(p1, offsetL);
+        sr = v2Add(p1, offsetR);
     }
     
-    // Calculate offset points at end
-    let endLeftPt, endRightPt;
-    if (isEndIntersection && endMiters) {
-        endLeftPt = endMiters.leftMiter || addVec(p2, scaleVec(perpLeft, halfW));
-        endRightPt = endMiters.rightMiter || addVec(p2, scaleVec(perpRight, halfW));
+    // End side offset points  
+    let el, er; // end-left, end-right
+    if (isEndIntersect && endMiter) {
+        el = endMiter.left || v2Add(p2, offsetL);
+        er = endMiter.right || v2Add(p2, offsetR);
     } else {
-        // Simple offset at end
-        endLeftPt = addVec(p2, scaleVec(perpLeft, halfW));
-        endRightPt = addVec(p2, scaleVec(perpRight, halfW));
+        el = v2Add(p2, offsetL);
+        er = v2Add(p2, offsetR);
     }
     
-    // Create 3D vertices with clear naming:
-    // B=Back (at p1), F=Front (at p2), L=Left, R=Right, b=bottom, t=top
-    const v3d = (x, y, z) => new CSG.Vertex([x, y, z], [0, 0, 1]);
+    // Helper to create vertex
+    const V = (x, y, z) => new CSG.Vertex([x, y, z], [0, 0, 1]);
     
-    const blb = v3d(startLeftPt.x, startLeftPt.y, 0);   // Back-Left-Bottom
-    const brb = v3d(startRightPt.x, startRightPt.y, 0); // Back-Right-Bottom
-    const flb = v3d(endLeftPt.x, endLeftPt.y, 0);       // Front-Left-Bottom
-    const frb = v3d(endRightPt.x, endRightPt.y, 0);    // Front-Right-Bottom
-    const blt = v3d(startLeftPt.x, startLeftPt.y, height);   // Back-Left-Top
-    const brt = v3d(startRightPt.x, startRightPt.y, height); // Back-Right-Top
-    const flt = v3d(endLeftPt.x, endLeftPt.y, height);       // Front-Left-Top
-    const frt = v3d(endRightPt.x, endRightPt.y, height);    // Front-Right-Top
+    // Bottom and top vertices
+    // Naming: s=start(p1), e=end(p2), l=left, r=right, b=bottom, t=top
+    const sslb = V(sl.x, sl.y, 0);   // Start-Left-Bottom
+    const ssrb = V(sr.x, sr.y, 0);   // Start-Right-Bottom
+    const selb = V(el.x, el.y, 0);   // End-Left-Bottom
+    const serb = V(er.x, er.y, 0);   // End-Right-Bottom
+    const sslt = V(sl.x, sl.y, height); // Start-Left-Top
+    const ssrt = V(sr.x, sr.y, height); // Start-Right-Top
+    const selft = V(el.x, el.y, height); // End-Left-Top
+    const sert = V(er.x, er.y, height);  // End-Right-Top
     
-    // 6 faces with correct CCW winding when viewed from outside
-    // These windings work for any tunnel direction
-    const bottom = new CSG.Polygon([blb, flb, frb, brb], null);  // Normal: (0,0,-1)
-    const top = new CSG.Polygon([blt, brt, frt, flt], null);     // Normal: (0,0,+1)
-    const back = new CSG.Polygon([blb, brb, brt, blt], null);   // Normal: opposite to dir
-    const front = new CSG.Polygon([flb, flt, frt, frb], null);  // Normal: same as dir
-    const left = new CSG.Polygon([blb, blt, flt, flb], null);    // Normal: same as perpLeft
-    const right = new CSG.Polygon([brb, frb, frt, brt], null);  // Normal: opposite to perpLeft
+    // 6 faces with correct CCW winding when viewed from OUTSIDE the tunnel
+    // Bottom face (z=0), normal points down (0,0,-1):
+    // CCW from below: sslb -> ssrb -> serb -> selb
+    const bottom = new CSG.Polygon([sslb, ssrb, serb, selb], null);
+    
+    // Top face (z=height), normal points up (0,0,1):
+    // CCW from above: sslt -> selft -> sert -> ssrt
+    const top = new CSG.Polygon([sslt, selft, sert, ssrt], null);
+    
+    // Back face (at start), normal points opposite to dir:
+    // CCW from back: sslb -> sslt -> ssrt -> ssrb
+    const back = new CSG.Polygon([sslb, sslt, ssrt, ssrb], null);
+    
+    // Front face (at end), normal points same as dir:
+    // CCW from front: selb -> selft -> sert -> serb
+    const front = new CSG.Polygon([selb, selft, sert, serb], null);
+    
+    // Left face, normal points in direction of left perpendicular:
+    // CCW from left: sslb -> sslt -> selft -> selb
+    const left = new CSG.Polygon([sslb, sslt, selft, selb], null);
+    
+    // Right face, normal points opposite to left perpendicular:
+    // CCW from right: ssrb -> ssrt -> sert -> serb
+    const right = new CSG.Polygon([ssrb, ssrt, sert, serb], null);
     
     return CSG.fromPolygons([bottom, top, back, front, left, right]);
 }
 
 function createBaseCube(sketch, height, padding) {
     const bbox = computeBoundingBoxWithMargin(sketch, padding);
-    const width = bbox.maxX - bbox.minX;
-    const depth = bbox.maxY - bbox.minY;
+    const w = bbox.maxX - bbox.minX;
+    const d = bbox.maxY - bbox.minY;
     
-    if (width <= 0 || depth <= 0 || height <= 0) {
+    if (w <= 0 || d <= 0 || height <= 0) {
         return createCSGCube(0, 0, height / 2, 10, 10, height);
     }
     
@@ -283,7 +251,7 @@ function createBaseCube(sketch, height, padding) {
         (bbox.minX + bbox.maxX) / 2,
         (bbox.minY + bbox.maxY) / 2,
         height / 2,
-        width, depth, height
+        w, d, height
     );
 }
 
@@ -291,12 +259,12 @@ function generateCSGModel(sketch, extrusionHeight, hallwayWidth) {
     const padding = hallwayWidth * 2;
     let base = createBaseCube(sketch, extrusionHeight, padding);
     
-    // Pre-calculate all miter points
-    const miterMap = calculateAllMiterPoints(sketch, hallwayWidth);
+    // Calculate all miter points first
+    const miterMap = calcAllMiters(sketch, hallwayWidth);
     
-    // Create tunnels with mitered ends
-    sketch.segments.forEach((seg, segIndex) => {
-        const tunnel = createTunnelPrism(sketch, segIndex, hallwayWidth, extrusionHeight, miterMap);
+    // Create and subtract tunnels
+    sketch.segments.forEach((s, idx) => {
+        const tunnel = createTunnel(sketch, idx, hallwayWidth, extrusionHeight, miterMap);
         if (tunnel) {
             base = base.subtract(tunnel);
         }
