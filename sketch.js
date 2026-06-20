@@ -1,9 +1,5 @@
 // sketch.js - 2D Sketch Data and Drawing Logic
 
-const GRID_SPACING = 1; // mm
-const SNAP_RADIUS = 5; // pixels
-const MAJOR_GRID_INTERVAL = 10; // mm
-
 // Canvas reference (initialized on DOM load)
 let canvas;
 let ctx;
@@ -14,6 +10,15 @@ const sketch = {
     segments: []      // Array of {start: index, end: index} referencing points
 };
 
+// Viewport constants
+const MIN_SCALE = 0.01;   // Minimum zoom (very far out)
+const MAX_SCALE = 200;    // Maximum zoom (very close in)
+const ZOOM_FACTOR = 1.05; // Zoom multiplier per wheel tick
+const SNAP_RADIUS = 5;   // pixels - radius for snapping to existing points
+
+// Grid granularity (user adjustable)
+let gridGranularity = 0.1; // 1.0 = default, 0.1-2.0 range
+
 // Viewport state
 const viewport = {
     offsetX: 0,    // mm at center of canvas
@@ -22,6 +27,16 @@ const viewport = {
     panX: 0,       // panning offset in pixels
     panY: 0        // panning offset in pixels
 };
+
+// Panning state
+let isPanning = false;
+let panStart = { x: 0, y: 0 };
+let spaceKeyPressed = false;
+
+// Deletion state
+let isDeleting = false;           // Toggle state for delete mode
+let deletionCandidates = [];     // Array of segment indices to delete
+let optionKeyPressed = false;    // Track Option/Alt key state
 
 // Drawing state
 let isDrawing = false;
@@ -45,11 +60,240 @@ function mmToPixel(mmX, mmY) {
 }
 
 // ============================================
+// ADAPTIVE GRID HELPERS
+// ============================================
+
+/**
+ * Calculate the base grid spacing based on current zoom level and granularity.
+ * Returns a "nice" round number that adapts to the zoom level.
+ */
+function getAdaptiveGridSpacing() {
+    const effectiveScale = viewport.scale * gridGranularity;
+    
+    // Discrete steps for nice round numbers
+    // effectiveScale = pixels per mm * granularity
+    // Higher effectiveScale = more zoomed in = finer grid
+    // Lower effectiveScale = more zoomed out = coarser grid
+    // At default: scale=2, granularity=1, effectiveScale=2 -> we want 1mm grid
+    if (effectiveScale >= 50) return 0.1;    // Very zoomed in: 0.1mm
+    if (effectiveScale >= 25) return 0.2;    // Very zoomed in: 0.2mm
+    if (effectiveScale >= 10) return 0.5;    // Zoomed in: 0.5mm
+    if (effectiveScale >= 2) return 1;      // Default and normal zoom: 1mm (at scale >= 2)
+    if (effectiveScale >= 1) return 2;      // Slightly zoomed out: 2mm
+    if (effectiveScale >= 0.5) return 5;   // Zoomed out: 5mm
+    if (effectiveScale >= 0.25) return 10;  // More zoomed out: 10mm
+    if (effectiveScale >= 0.1) return 20;   // Far zoomed out: 20mm
+    if (effectiveScale >= 0.05) return 50;  // Very far: 50mm
+    return 100; // Extremely far: 100mm
+}
+
+/**
+ * Get current grid information for display
+ */
+function getCurrentGridInfo() {
+    const minorSpacing = getAdaptiveGridSpacing();
+    const majorSpacing = minorSpacing * 10;
+    return { minorSpacing, majorSpacing, granularity: gridGranularity };
+}
+
+/**
+ * Reset viewport to initial state
+ */
+function resetViewport() {
+    viewport.offsetX = 0;
+    viewport.offsetY = 0;
+    viewport.scale = 2;
+    viewport.panX = 0;
+    viewport.panY = 0;
+    drawCanvas();
+    updateGridDisplay();
+}
+
+/**
+ * Update the grid size display in the UI
+ */
+function updateGridDisplay() {
+    const gridInfo = getCurrentGridInfo();
+    const gridSizeEl = document.getElementById('gridSize');
+    if (gridSizeEl) {
+        gridSizeEl.textContent = `Grid: ${gridInfo.minorSpacing.toFixed(1)}mm/${gridInfo.majorSpacing.toFixed(1)}mm`;
+    }
+}
+
+// ============================================
+// DELETION HELPERS
+// ============================================
+
+/**
+ * Get the grid cell coordinates that a point belongs to
+ * Returns { cellX, cellY } in mm, aligned to grid spacing
+ * Uses floor to get cell containing point
+ */
+function getGridCell(mmX, mmY) {
+    const gridSpacing = getAdaptiveGridSpacing();
+    return {
+        x: Math.floor(mmX / gridSpacing) * gridSpacing,
+        y: Math.floor(mmY / gridSpacing) * gridSpacing
+    };
+}
+
+/**
+ * Check if segment (p1-p2) intersects the grid cell at (cellX, cellY) with given spacing.
+ * A segment intersects if:
+ *   - Either endpoint is inside the cell, OR
+ *   - The segment crosses through the cell (including at edges), OR
+ *   - The segment lies exactly on a cell edge
+ *
+ * Cell is defined as [cellX, cellRight) x [cellY, cellBottom) (half-open)
+ * But edges are included: segments ON edges count as intersecting.
+ */
+function segmentIntersectsGridCell(p1, p2, cellX, cellY, gridSpacing) {
+    const cellRight = cellX + gridSpacing;
+    const cellBottom = cellY + gridSpacing;
+    
+    // Check if either endpoint is strictly inside the cell
+    const p1InCell = p1.x >= cellX && p1.x < cellRight && p1.y >= cellY && p1.y < cellBottom;
+    const p2InCell = p2.x >= cellX && p2.x < cellRight && p2.y >= cellY && p2.y < cellBottom;
+    
+    if (p1InCell || p2InCell) return true;
+    
+    // Check if segment lies exactly ON a cell edge
+    // Vertical segment on left edge (x = cellX)
+    if (p1.x === cellX && p2.x === cellX) {
+        const segYMin = Math.min(p1.y, p2.y);
+        const segYMax = Math.max(p1.y, p2.y);
+        return segYMax >= cellY && segYMin <= cellBottom;
+    }
+    // Vertical segment on right edge (x = cellRight)
+    if (p1.x === cellRight && p2.x === cellRight) {
+        const segYMin = Math.min(p1.y, p2.y);
+        const segYMax = Math.max(p1.y, p2.y);
+        return segYMax >= cellY && segYMin <= cellBottom;
+    }
+    // Horizontal segment on top edge (y = cellY)
+    if (p1.y === cellY && p2.y === cellY) {
+        const segXMin = Math.min(p1.x, p2.x);
+        const segXMax = Math.max(p1.x, p2.x);
+        return segXMax >= cellX && segXMin <= cellRight;
+    }
+    // Horizontal segment on bottom edge (y = cellBottom)
+    if (p1.y === cellBottom && p2.y === cellBottom) {
+        const segXMin = Math.min(p1.x, p2.x);
+        const segXMax = Math.max(p1.x, p2.x);
+        return segXMax >= cellX && segXMin <= cellRight;
+    }
+    
+    // For diagonal segments, check if they cross any of the 4 cell edges
+    // Check left edge (x = cellX)
+    if (p1.x !== p2.x) {
+        const t = (cellX - p1.x) / (p2.x - p1.x);
+        if (t >= 0 && t <= 1) {
+            const y = p1.y + t * (p2.y - p1.y);
+            if (y >= cellY && y <= cellBottom) return true;
+        }
+    }
+    
+    // Check right edge (x = cellRight)
+    if (p1.x !== p2.x) {
+        const t = (cellRight - p1.x) / (p2.x - p1.x);
+        if (t >= 0 && t <= 1) {
+            const y = p1.y + t * (p2.y - p1.y);
+            if (y >= cellY && y <= cellBottom) return true;
+        }
+    }
+    
+    // Check top edge (y = cellY)
+    if (p1.y !== p2.y) {
+        const t = (cellY - p1.y) / (p2.y - p1.y);
+        if (t >= 0 && t <= 1) {
+            const x = p1.x + t * (p2.x - p1.x);
+            if (x >= cellX && x <= cellRight) return true;
+        }
+    }
+    
+    // Check bottom edge (y = cellBottom)
+    if (p1.y !== p2.y) {
+        const t = (cellBottom - p1.y) / (p2.y - p1.y);
+        if (t >= 0 && t <= 1) {
+            const x = p1.x + t * (p2.x - p1.x);
+            if (x >= cellX && x <= cellRight) return true;
+        }
+    }
+    
+    return false;
+}
+
+/**
+ * Find all segments that pass through the grid cell at the given MM position
+ * Returns array of segment indices
+ */
+function findDeletionCandidates(mmX, mmY) {
+    const gridSpacing = getAdaptiveGridSpacing();
+    const cell = getGridCell(mmX, mmY);
+    const candidates = [];
+    
+    sketch.segments.forEach((seg, idx) => {
+        const p1 = sketch.points[seg.start];
+        const p2 = sketch.points[seg.end];
+        if (segmentIntersectsGridCell(p1, p2, cell.x, cell.y, gridSpacing)) {
+            candidates.push(idx);
+        }
+    });
+    
+    return candidates;
+}
+
+/**
+ * Delete segments by index and remove orphaned points
+ * Rebuilds points array and remaps segment indices
+ */
+function deleteSegments(segmentIndices) {
+    const indicesToDelete = new Set(segmentIndices);
+    
+    // Remove segments
+    sketch.segments = sketch.segments.filter((_, idx) => !indicesToDelete.has(idx));
+    
+    // Find points that are still referenced by remaining segments
+    const usedPointIndices = new Set();
+    sketch.segments.forEach(seg => {
+        usedPointIndices.add(seg.start);
+        usedPointIndices.add(seg.end);
+    });
+    
+    // Build new points array and create mapping from old index to new index
+    const pointMap = new Map();
+    const newPoints = [];
+    let newIndex = 0;
+    
+    sketch.points.forEach((p, oldIndex) => {
+        if (usedPointIndices.has(oldIndex)) {
+            pointMap.set(oldIndex, newIndex);
+            newPoints.push(p);
+            newIndex++;
+        }
+    });
+    
+    sketch.points = newPoints;
+    
+    // Remap segment indices to new point indices
+    sketch.segments.forEach(seg => {
+        seg.start = pointMap.get(seg.start);
+        seg.end = pointMap.get(seg.end);
+    });
+    
+    updateStatus();
+}
+
+// ============================================
 // SNAPPING HELPERS
 // ============================================
 
 function snapToGrid(mmX, mmY) {
-    return { x: Math.round(mmX), y: Math.round(mmY) };
+    const gridSpacing = getAdaptiveGridSpacing();
+    return { 
+        x: Math.round(mmX / gridSpacing) * gridSpacing,
+        y: Math.round(mmY / gridSpacing) * gridSpacing
+    };
 }
 
 function findNearestPoint(mmX, mmY, maxDistanceMM) {
@@ -120,16 +364,22 @@ function getSketchStats() {
 // ============================================
 
 function drawGrid() {
+    const gridSpacing = getAdaptiveGridSpacing();
+    const majorSpacing = gridSpacing * 10;
+    
     const startX = Math.floor(viewport.offsetX - canvas.width / 2 / viewport.scale);
     const startY = Math.floor(viewport.offsetY - canvas.height / 2 / viewport.scale);
     const endX = Math.ceil(viewport.offsetX + canvas.width / 2 / viewport.scale);
     const endY = Math.ceil(viewport.offsetY + canvas.height / 2 / viewport.scale);
     
-    ctx.strokeStyle = '#eee';
-    ctx.lineWidth = 1;
+    // Adapt line width to zoom level - thinner when zoomed out
+    const lineWidthScale = Math.min(2, Math.max(0.5, 1 / Math.sqrt(viewport.scale)));
     
-    // Minor grid lines (1mm)
-    for (let x = startX; x <= endX; x++) {
+    // Minor grid lines
+    ctx.strokeStyle = '#eee';
+    ctx.lineWidth = 1 * lineWidthScale;
+    
+    for (let x = Math.floor(startX / gridSpacing) * gridSpacing; x <= endX; x += gridSpacing) {
         const px = mmToPixel(x, 0).x;
         if (px >= 0 && px <= canvas.width) {
             ctx.beginPath();
@@ -138,7 +388,7 @@ function drawGrid() {
             ctx.stroke();
         }
     }
-    for (let y = startY; y <= endY; y++) {
+    for (let y = Math.floor(startY / gridSpacing) * gridSpacing; y <= endY; y += gridSpacing) {
         const py = mmToPixel(0, y).y;
         if (py >= 0 && py <= canvas.height) {
             ctx.beginPath();
@@ -148,10 +398,11 @@ function drawGrid() {
         }
     }
     
-    // Major grid lines (10mm)
+    // Major grid lines (10x minor spacing)
     ctx.strokeStyle = '#ccc';
-    ctx.lineWidth = 2;
-    for (let x = Math.floor(startX / MAJOR_GRID_INTERVAL) * MAJOR_GRID_INTERVAL; x <= endX; x += MAJOR_GRID_INTERVAL) {
+    ctx.lineWidth = 2 * lineWidthScale;
+    
+    for (let x = Math.floor(startX / majorSpacing) * majorSpacing; x <= endX; x += majorSpacing) {
         const px = mmToPixel(x, 0).x;
         if (px >= 0 && px <= canvas.width) {
             ctx.beginPath();
@@ -160,7 +411,7 @@ function drawGrid() {
             ctx.stroke();
         }
     }
-    for (let y = Math.floor(startY / MAJOR_GRID_INTERVAL) * MAJOR_GRID_INTERVAL; y <= endY; y += MAJOR_GRID_INTERVAL) {
+    for (let y = Math.floor(startY / majorSpacing) * majorSpacing; y <= endY; y += majorSpacing) {
         const py = mmToPixel(0, y).y;
         if (py >= 0 && py <= canvas.height) {
             ctx.beginPath();
@@ -172,13 +423,15 @@ function drawGrid() {
 }
 
 function drawSketch() {
-    // Draw segments
-    ctx.strokeStyle = '#000';
-    ctx.lineWidth = 2;
+    // Draw segments - deletion candidates in red, others in black
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     
-    sketch.segments.forEach(seg => {
+    sketch.segments.forEach((seg, idx) => {
+        const isCandidate = deletionCandidates.includes(idx);
+        ctx.strokeStyle = isCandidate ? '#ff0000' : '#000';
+        ctx.lineWidth = isCandidate ? 3 : 2;
+        
         const p1 = sketch.points[seg.start];
         const p2 = sketch.points[seg.end];
         const pixel1 = mmToPixel(p1.x, p1.y);
@@ -246,6 +499,9 @@ function drawCanvas() {
     drawGrid();
     drawSketch();
     drawPreview();
+    
+    // Update grid size display after drawing
+    updateGridDisplay();
 }
 
 // ============================================
@@ -256,6 +512,24 @@ function handleCanvasInput(type, mouseX, mouseY) {
     const mm = pixelToMM(mouseX, mouseY);
     const snappedMM = snapToExistingPoint(mm.x, mm.y);
     
+    // In deletion mode (toggle or Alt/Option key), handle differently
+    if (isDeleting || optionKeyPressed) {
+        if (type === 'move') {
+            // Update deletion candidates as cursor moves
+            deletionCandidates = findDeletionCandidates(snappedMM.x, snappedMM.y);
+            drawCanvas();
+        } else if (type === 'up') {
+            // Delete the candidates on click release
+            if (deletionCandidates.length > 0) {
+                deleteSegments(deletionCandidates);
+                deletionCandidates = [];
+                drawCanvas();
+            }
+        }
+        return;  // Don't handle drawing in deletion mode
+    }
+    
+    // Original drawing logic
     if (type === 'down') {
         if (!isDrawing) {
             const nearestIndex = findNearestPoint(snappedMM.x, snappedMM.y, SNAP_RADIUS / viewport.scale);
@@ -342,17 +616,75 @@ function initSketchCanvas() {
     window.addEventListener('resize', resizeCanvas);
     
     // Mouse event listeners
+    // Track spacebar state for panning
+    window.addEventListener('keydown', (e) => {
+        if (e.code === 'Space') {
+            spaceKeyPressed = true;
+            e.preventDefault();
+        }
+        // Track Option/Alt key for deletion mode
+        if (e.key === 'Alt' || e.code === 'AltLeft' || e.code === 'AltRight' || e.code === 'Option') {
+            optionKeyPressed = true;
+            e.preventDefault();
+        }
+    });
+    
+    window.addEventListener('keyup', (e) => {
+        if (e.code === 'Space') {
+            spaceKeyPressed = false;
+            e.preventDefault();
+        }
+        // Track Option/Alt key release
+        if (e.key === 'Alt' || e.code === 'AltLeft' || e.code === 'AltRight' || e.code === 'Option') {
+            optionKeyPressed = false;
+            deletionCandidates = [];
+            drawCanvas();
+            e.preventDefault();
+        }
+    });
+    
     canvas.addEventListener('mousedown', (e) => {
         const rect = canvas.getBoundingClientRect();
-        handleCanvasInput('down', e.clientX - rect.left, e.clientY - rect.top);
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+        
+        // Check if this is a pan gesture (middle mouse button or Space + left click)
+        if (e.button === 1 || (e.button === 0 && spaceKeyPressed)) {
+            isPanning = true;
+            panStart = { x: mouseX, y: mouseY };
+            e.preventDefault();
+            return;
+        }
+        
+        handleCanvasInput('down', mouseX, mouseY);
     });
     
     canvas.addEventListener('mousemove', (e) => {
         const rect = canvas.getBoundingClientRect();
-        handleCanvasInput('move', e.clientX - rect.left, e.clientY - rect.top);
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+        
+        // Handle panning
+        if (isPanning) {
+            const dx = mouseX - panStart.x;
+            const dy = mouseY - panStart.y;
+            viewport.panX -= dx;
+            viewport.panY -= dy;
+            panStart = { x: mouseX, y: mouseY };
+            drawCanvas();
+            return;
+        }
+        
+        handleCanvasInput('move', mouseX, mouseY);
     });
     
     canvas.addEventListener('mouseup', (e) => {
+        if (isPanning) {
+            isPanning = false;
+            e.preventDefault();
+            return;
+        }
+        
         const rect = canvas.getBoundingClientRect();
         handleCanvasInput('up', e.clientX - rect.left, e.clientY - rect.top);
     });
@@ -364,7 +696,36 @@ function initSketchCanvas() {
             startPointIndex = null;
             drawCanvas();
         }
+        if (isPanning) {
+            isPanning = false;
+        }
     });
+    
+    // Wheel event for zooming
+    canvas.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const rect = canvas.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+        
+        // Calculate zoom factor
+        const zoomIn = e.deltaY < 0;
+        const zoomFactor = zoomIn ? ZOOM_FACTOR : 1 / ZOOM_FACTOR;
+        
+        // Get mouse position in MM before zoom
+        const mouseMM = pixelToMM(mouseX, mouseY);
+        
+        // Apply zoom
+        viewport.scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, viewport.scale * zoomFactor));
+        
+        // Adjust offset to zoom toward mouse position
+        const mouseMMAfter = pixelToMM(mouseX, mouseY);
+        viewport.offsetX += (mouseMM.x - mouseMMAfter.x);
+        viewport.offsetY += (mouseMM.y - mouseMMAfter.y);
+        
+        drawCanvas();
+        updateGridDisplay();
+    }, { passive: false });
     
     // Touch support
     canvas.addEventListener('touchstart', (e) => {

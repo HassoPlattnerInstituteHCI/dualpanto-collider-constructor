@@ -12,6 +12,40 @@ let generatedOBJ = null;
 // ============================================
 
 function initControls() {
+    // Grid granularity slider
+    const granularitySlider = document.getElementById('gridGranularity');
+    const granularityValue = document.getElementById('granularityValue');
+    
+    if (granularitySlider && granularityValue) {
+        granularitySlider.addEventListener('input', (e) => {
+            gridGranularity = parseFloat(e.target.value);
+            granularityValue.textContent = gridGranularity.toFixed(1);
+            drawCanvas();
+        });
+    }
+    
+    // Reset view button
+    const resetViewBtn = document.getElementById('resetViewBtn');
+    if (resetViewBtn) {
+        resetViewBtn.addEventListener('click', () => {
+            resetViewport();
+            updateStatus();
+        });
+    }
+    
+    // Delete mode button
+    const deleteBtn = document.getElementById('deleteBtn');
+    if (deleteBtn) {
+        deleteBtn.addEventListener('click', () => {
+            isDeleting = !isDeleting;
+            deleteBtn.classList.toggle('active', isDeleting);
+            deletionCandidates = [];
+            drawCanvas();
+            updateStatus();
+        });
+    }
+    
+    // Clear button
     document.getElementById('clearBtn').addEventListener('click', () => {
         clearSketch();
         generatedOBJ = null;
@@ -20,7 +54,10 @@ function initControls() {
         drawCanvas();
     });
     
+    // Extrude button
     document.getElementById('extrudeBtn').addEventListener('click', generate3DModel);
+    
+    // Download button
     document.getElementById('downloadBtn').addEventListener('click', () => {
         if (generatedOBJ) {
             const segmentCount = sketch.segments.length;
@@ -35,8 +72,16 @@ function updateStatus() {
     const stats = getSketchStats();
     document.getElementById('pointCount').textContent = `Points: ${stats.pointCount}`;
     document.getElementById('segmentCount').textContent = `Segments: ${stats.segmentCount}`;
-    document.getElementById('statusMessage').textContent = stats.segmentCount > 0 ? 
-        `${stats.segmentCount} hallway segment(s) drawn` : 'Ready';
+    
+    const statusEl = document.getElementById('statusMessage');
+    if (isDeleting || optionKeyPressed) {
+        statusEl.textContent = deletionCandidates.length > 0 
+            ? `${deletionCandidates.length} segment(s) to delete - click to remove` 
+            : 'Delete mode: hover over segments to highlight';
+    } else {
+        statusEl.textContent = stats.segmentCount > 0 ? 
+            `${stats.segmentCount} hallway segment(s) drawn` : 'Ready';
+    }
 }
 
 // ============================================

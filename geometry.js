@@ -1,145 +1,187 @@
-// geometry.js - Simple 3D Extrusion with Rectangular Tunnels
-// No miters initially - just get basic cutouts working
+// geometry.js - CSG-Based 3D Extrusion with Perfect Junctions
 
 function computeBoundingBoxWithMargin(sketch, margin) {
-    if (sketch.points.length === 0) {
-        return { minX: 0, maxX: 0, minY: 0, maxY: 0 };
-    }
-    let minX = Infinity, maxX = -Infinity;
-    let minY = Infinity, maxY = -Infinity;
+    if (sketch.points.length === 0) return { minX: 0, maxX: 0, minY: 0, maxY: 0 };
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
     sketch.points.forEach(p => {
-        minX = Math.min(minX, p.x);
-        maxX = Math.max(maxX, p.x);
-        minY = Math.min(minY, p.y);
-        maxY = Math.max(maxY, p.y);
+        minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+        minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
     });
-    return {
-        minX: minX - margin,
-        maxX: maxX + margin,
-        minY: minY - margin,
-        maxY: maxY + margin
-    };
+    return { minX: minX - margin, maxX: maxX + margin, minY: minY - margin, maxY: maxY + margin };
 }
 
 function createCSGCube(centerX, centerY, centerZ, width, depth, height) {
-    return CSG.cube({
-        center: [centerX, centerY, centerZ],
-        radius: [width / 2, depth / 2, height / 2]
-    });
-}
-
-// Simple 2D vector helpers
-function v2Add(a, b) { return { x: a.x + b.x, y: a.y + b.y }; }
-function v2Scale(v, s) { return { x: v.x * s, y: v.y * s }; }
-function v2perp90(v) { return { x: -v.y, y: v.x }; } // 90 deg CCW
-
-/**
- * Create a tunnel prism for a line segment
- * Uses direct vertex computation - no rotation/translation
- * Tunnel extends hallwayWidth/2 beyond each endpoint for clean intersections
- */
-function createTunnelPrism(p1, p2, hallwayWidth, height) {
-    const dx = p2.x - p1.x;
-    const dy = p2.y - p1.y;
-    const length = Math.hypot(dx, dy);
-    
-    if (length < 0.001) return null;
-    
-    // Unit direction vector
-    const dir = { x: dx / length, y: dy / length };
-    // Perpendicular vectors
-    const perpL = v2perp90(dir); // 90 CCW (left)
-    const perpR = v2perp90(perpL); // 90 CW (right)
-    
-    const halfW = hallwayWidth / 2;
-    const halfH = height / 2;
-    const midZ = height / 2;
-    
-    // Tunnel length: extend beyond endpoints for clean intersections
-    const tunnelLength = length + hallwayWidth;
-    const halfL = tunnelLength / 2;
-    
-    // Center at midpoint
-    const midX = (p1.x + p2.x) / 2;
-    const midY = (p1.y + p2.y) / 2;
-    
-    // Helper to create vertex
-    const V = (x, y, z) => new CSG.Vertex([x, y, z], [0, 0, 1]);
-    
-    // Compute 8 vertices of the tunnel prism
-    // Using local coordinates along the segment
-    const vertices = [];
-    for (const l of [-halfL, halfL]) {
-        for (const w of [-halfW, halfW]) {
-            for (const h of [-halfH, halfH]) {
-                vertices.push(V(
-                    midX + l * dir.x + w * perpL.x,
-                    midY + l * dir.y + w * perpL.y,
-                    midZ + h
-                ));
-            }
-        }
-    }
-    
-    // Map vertex indices: l, w, h -> index
-    // l=-1: 0-3, l=+1: 4-7
-    // w=-1: 0,2,4,6; w=+1: 1,3,5,7
-    // h=-1: 0-3; h=+1: 4-7
-    const v = (l, w, h) => vertices[(l+1)*4 + (w+1)*2 + (h+1)];
-    
-    // 6 faces with correct CCW winding
-    const polygons = [
-        // Bottom (h=-1)
-        new CSG.Polygon([v(-1,-1,-1), v(-1,+1,-1), v(+1,+1,-1), v(+1,-1,-1)], null),
-        // Top (h=+1)
-        new CSG.Polygon([v(-1,-1,+1), v(+1,-1,+1), v(+1,+1,+1), v(-1,+1,+1)], null),
-        // Back (l=-1)
-        new CSG.Polygon([v(-1,-1,-1), v(-1,-1,+1), v(-1,+1,+1), v(-1,+1,-1)], null),
-        // Front (l=+1)
-        new CSG.Polygon([v(+1,-1,-1), v(+1,+1,-1), v(+1,+1,+1), v(+1,-1,+1)], null),
-        // Left (w=-1)
-        new CSG.Polygon([v(-1,-1,-1), v(-1,-1,+1), v(+1,-1,+1), v(+1,-1,-1)], null),
-        // Right (w=+1)
-        new CSG.Polygon([v(-1,+1,-1), v(+1,+1,-1), v(+1,+1,+1), v(-1,+1,+1)], null)
-    ];
-    
-    return CSG.fromPolygons(polygons);
+    return CSG.cube({ center: [centerX, centerY, centerZ], radius: [width / 2, depth / 2, height / 2] });
 }
 
 function createBaseCube(sketch, height, padding) {
     const bbox = computeBoundingBoxWithMargin(sketch, padding);
-    const width = bbox.maxX - bbox.minX;
-    const depth = bbox.maxY - bbox.minY;
-    
-    if (width <= 0 || depth <= 0 || height <= 0) {
-        return createCSGCube(0, 0, height / 2, 10, 10, height);
-    }
-    
-    return createCSGCube(
-        (bbox.minX + bbox.maxX) / 2,
-        (bbox.minY + bbox.maxY) / 2,
-        height / 2,
-        width, depth, height
-    );
+    return createCSGCube((bbox.minX + bbox.maxX) / 2, (bbox.minY + bbox.maxY) / 2, height / 2, bbox.maxX - bbox.minX, bbox.maxY - bbox.minY, height);
 }
 
-function generateCSGModel(sketch, extrusionHeight, hallwayWidth) {
-    const padding = hallwayWidth * 2;
-    let base = createBaseCube(sketch, extrusionHeight, padding);
+// Vector Helpers
+function vSub(a, b) { return { x: a.x - b.x, y: a.y - b.y }; }
+function vAdd(a, b) { return { x: a.x + b.x, y: a.y + b.y }; }
+function vScale(a, s) { return { x: a.x * s, y: a.y * s }; }
+function vLen(a) { return Math.hypot(a.x, a.y); }
+function vLeftNormal(d) { return { x: -d.y, y: d.x }; }
+
+function lineIntersect2D(A, dirA, B, dirB, eps = 1e-9) {
+    const denom = dirA.x * dirB.y - dirA.y * dirB.x;
+    if (Math.abs(denom) < eps) return null;
+    return { x: A.x + dirA.x * ((B.x - A.x) * dirB.y - (B.y - A.y) * dirB.x) / denom, y: A.y + dirA.y * ((B.x - A.x) * dirB.y - (B.y - A.y) * dirB.x) / denom };
+}
+
+function signedArea2D(points) {
+    let area = 0;
+    for (let i = 0; i < points.length; i++) {
+        const p1 = points[i], p2 = points[(i + 1) % points.length];
+        area += p1.x * p2.y - p2.x * p1.y;
+    }
+    return area / 2;
+}
+
+function buildJunctionArms(sketch) {
+    const arms = new Map();
+    sketch.points.forEach((_, idx) => arms.set(idx, []));
+    sketch.segments.forEach((seg, segIndex) => {
+        const p1 = sketch.points[seg.start], p2 = sketch.points[seg.end];
+        const dx = p2.x - p1.x, dy = p2.y - p1.y, len = Math.hypot(dx, dy);
+        if (len < 0.001) return;
+        const dStart = { x: dx / len, y: dy / len }, dEnd = { x: -dx / len, y: -dy / len };
+        arms.get(seg.start).push({ segIndex, dir: dStart, angle: Math.atan2(dStart.y, dStart.x), isStart: true });
+        arms.get(seg.end).push({ segIndex, dir: dEnd, angle: Math.atan2(dEnd.y, dEnd.x), isStart: false });
+    });
+    arms.forEach(list => list.sort((a, b) => a.angle - b.angle));
+    return arms;
+}
+
+/**
+ * Extrudes a clean 2D polygon into a 3D CSG solid
+ */
+function createExtrudedPrism(points2D, zMin, zMax) {
+    if (points2D.length < 3) return null;
+    let pts = points2D;
+    if (signedArea2D(pts) < 0) pts = pts.slice().reverse();
+
+    const polygons = [];
+    const n = pts.length;
+    const bottomVerts = pts.map(p => new CSG.Vertex([p.x, p.y, zMin], [0, 0, -1]));
+    const topVerts = pts.map(p => new CSG.Vertex([p.x, p.y, zMax], [0, 0, 1]));
+
+    polygons.push(new CSG.Polygon(bottomVerts.slice().reverse()));
+    polygons.push(new CSG.Polygon(topVerts));
+
+    for (let i = 0; i < n; i++) {
+        const j = (i + 1) % n;
+        const p1 = pts[i], p2 = pts[j];
+        const ex = p2.x - p1.x, ey = p2.y - p1.y, len = Math.hypot(ex, ey) || 1;
+        const nx = ey / len, ny = -ex / len;
+
+        polygons.push(new CSG.Polygon([
+            new CSG.Vertex([p1.x, p1.y, zMin], [nx, ny, 0]),
+            new CSG.Vertex([p2.x, p2.y, zMin], [nx, ny, 0]),
+            new CSG.Vertex([p2.x, p2.y, zMax], [nx, ny, 0]),
+            new CSG.Vertex([p1.x, p1.y, zMax], [nx, ny, 0])
+        ]));
+    }
+    return CSG.fromPolygons(polygons);
+}
+
+/**
+ * Computes all junction shapes and segment end-cap connectors cleanly
+ */
+function generateCSGModel(sketch, extrusionHeight, hallwayWidth, miterLimit = 4) {
+    const r = hallwayWidth / 2;
+    const maxMiterDist = hallwayWidth * miterLimit;
+    const armsMap = buildJunctionArms(sketch);
     
-    sketch.segments.forEach(seg => {
-        const p1 = sketch.points[seg.start];
-        const p2 = sketch.points[seg.end];
-        const tunnel = createTunnelPrism(p1, p2, hallwayWidth, extrusionHeight);
-        if (tunnel) {
-            base = base.subtract(tunnel);
+    let base = createBaseCube(sketch, extrusionHeight, hallwayWidth * 2);
+
+    // Maps to store the clean transition line for each segment end
+    // key: segIndex -> { startLeft, startRight, endLeft, endRight }
+    const segCaps = new Map();
+    sketch.segments.forEach((_, idx) => segCaps.set(idx, {}));
+
+    // 1. Generate Junction Rooms and map out segment connection lines
+    armsMap.forEach((armList, pointIndex) => {
+        const point = sketch.points[pointIndex];
+        const n = armList.length;
+        if (n === 0) return;
+
+        if (n === 1) {
+            // Dead end: Create flat cap reference points
+            const arm = armList[0];
+            const nrm = vLeftNormal(arm.dir);
+            const leftPt = vAdd(point, vScale(nrm, r));
+            const rightPt = vSub(point, vScale(nrm, r));
+            
+            const cap = segCaps.get(arm.segIndex);
+            if (arm.isStart) { cap.startLeft = leftPt; cap.startRight = rightPt; }
+            else { cap.endLeft = rightPt; cap.endRight = leftPt; }
+            return;
+        }
+
+        // Multi-line junction (2 or more arms): Calculate cyclic wall intersection points
+        const junctionVertices = [];
+        const gapCorners = new Array(n);
+
+        for (let i = 0; i < n; i++) {
+            const armA = armList[i];
+            const armB = armList[(i + 1) % n];
+            
+            const nA = vLeftNormal(armA.dir);
+            const nB = vLeftNormal(armB.dir);
+
+            const lineAOrigin = vAdd(point, vScale(nA, r));
+            const lineBOrigin = vSub(point, vScale(nB, r));
+
+            let corner = lineIntersect2D(lineAOrigin, armA.dir, lineBOrigin, armB.dir);
+            if (!corner || vLen(vSub(corner, point)) > maxMiterDist) {
+                corner = lineAOrigin; // Fallback
+            }
+            
+            gapCorners[i] = corner;
+            junctionVertices.push(corner);
+        }
+
+        // Carve out the unified Junction Room polygon
+        const junctionVolume = createExtrudedPrism(junctionVertices, 0, extrusionHeight);
+        if (junctionVolume) {
+            base = base.subtract(junctionVolume);
+        }
+
+        // Assign corners to their respective matching segment ends
+        for (let i = 0; i < n; i++) {
+            const arm = armList[i];
+            const prevIdx = (i - 1 + n) % n;
+            
+            const leftPt = gapCorners[i];
+            const rightPt = gapCorners[prevIdx];
+
+            const cap = segCaps.get(arm.segIndex);
+            if (arm.isStart) { cap.startLeft = leftPt; cap.startRight = rightPt; }
+            else { cap.endLeft = rightPt; cap.endRight = leftPt; }
         }
     });
-    
+
+    // 2. Carve out the perfectly straight, constant-width Hallway Trunks
+    sketch.segments.forEach((_, segIndex) => {
+        const caps = segCaps.get(segIndex);
+        if (!caps.startLeft || !caps.endLeft) return;
+
+        // A perfect 4-point convex rectangle spanning between junction rooms
+        const trunkPoints = [caps.startRight, caps.endRight, caps.endLeft, caps.startLeft];
+        const trunkVolume = createExtrudedPrism(trunkPoints, 0, extrusionHeight);
+        if (trunkVolume) {
+            base = base.subtract(trunkVolume);
+        }
+    });
+
     return base;
 }
 
-function generateOBJFromSketch(sketch, extrusionHeight, hallwayWidth) {
-    const csgModel = generateCSGModel(sketch, extrusionHeight, hallwayWidth);
+function generateOBJFromSketch(sketch, extrusionHeight, hallwayWidth, miterLimit = 4) {
+    const csgModel = generateCSGModel(sketch, extrusionHeight, hallwayWidth, miterLimit);
     return csgToOBJ(csgModel);
 }

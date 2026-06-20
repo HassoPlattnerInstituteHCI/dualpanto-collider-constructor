@@ -52,12 +52,30 @@ h1 {
     color: #555;
 }
 
-.control-group input {
+.control-group input[type="number"] {
     padding: 8px 12px;
     border: 1px solid #ddd;
     border-radius: 4px;
     font-size: 14px;
     width: 120px;
+}
+
+.control-group input[type="range"] {
+    width: 120px;
+    margin-top: 4px;
+}
+
+.slider-container {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.slider-container span {
+    min-width: 30px;
+    text-align: center;
+    font-size: 13px;
+    color: #555;
 }
 
 .control-group input:focus {
@@ -81,35 +99,57 @@ h1 {
     transition: all 0.2s;
 }
 
-.button-group button:first-child {
-    background: #4a90e2;
+.button-group button:nth-child(1) {
+    background: #6c757d;
     color: white;
 }
 
-.button-group button:first-child:hover {
-    background: #3a7bc8;
+.button-group button:nth-child(1):hover {
+    background: #5a6268;
 }
 
 .button-group button:nth-child(2) {
-    background: #28a745;
-    color: white;
-}
-
-.button-group button:nth-child(2):disabled {
-    background: #cccccc;
-    cursor: not-allowed;
-}
-
-.button-group button:nth-child(2):hover:not(:disabled) {
-    background: #218838;
-}
-
-.button-group button:nth-child(3) {
     background: #dc3545;
     color: white;
 }
 
+.button-group button:nth-child(2):hover {
+    background: #c82333;
+}
+
+.button-group button:nth-child(2).active {
+    background: #a71d2a;
+}
+
+.button-group button:nth-child(3) {
+    background: #4a90e2;
+    color: white;
+}
+
 .button-group button:nth-child(3):hover {
+    background: #3a7bc8;
+}
+
+.button-group button:nth-child(4) {
+    background: #28a745;
+    color: white;
+}
+
+.button-group button:nth-child(4):disabled {
+    background: #cccccc;
+    cursor: not-allowed;
+}
+
+.button-group button:nth-child(4):hover:not(:disabled) {
+    background: #218838;
+}
+
+.button-group button:nth-child(5) {
+    background: #dc3545;
+    color: white;
+}
+
+.button-group button:nth-child(5):hover {
     background: #c82333;
 }
 
