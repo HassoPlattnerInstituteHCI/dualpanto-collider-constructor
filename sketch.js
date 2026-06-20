@@ -13,7 +13,7 @@ const sketch = {
 // Viewport constants
 const MIN_SCALE = 0.01;   // Minimum zoom (very far out)
 const MAX_SCALE = 200;    // Maximum zoom (very close in)
-const ZOOM_FACTOR = 1.05; // Zoom multiplier per wheel tick
+const ZOOM_FACTOR = 1.03; // Zoom multiplier per wheel tick
 const SNAP_RADIUS = 5;   // pixels - radius for snapping to existing points
 
 // Grid granularity (user adjustable)
@@ -75,15 +75,15 @@ function getAdaptiveGridSpacing() {
     // Higher effectiveScale = more zoomed in = finer grid
     // Lower effectiveScale = more zoomed out = coarser grid
     // At default: scale=2, granularity=1, effectiveScale=2 -> we want 1mm grid
-    if (effectiveScale >= 50) return 0.1;    // Very zoomed in: 0.1mm
-    if (effectiveScale >= 25) return 0.2;    // Very zoomed in: 0.2mm
+    if (effectiveScale >= 50) return 0.125;    // Very zoomed in: 0.1mm
+    if (effectiveScale >= 25) return 0.25;    // Very zoomed in: 0.2mm
     if (effectiveScale >= 10) return 0.5;    // Zoomed in: 0.5mm
     if (effectiveScale >= 2) return 1;      // Default and normal zoom: 1mm (at scale >= 2)
     if (effectiveScale >= 1) return 2;      // Slightly zoomed out: 2mm
-    if (effectiveScale >= 0.5) return 5;   // Zoomed out: 5mm
+    if (effectiveScale >= 0.5) return 3;   // Zoomed out: 5mm
     if (effectiveScale >= 0.25) return 10;  // More zoomed out: 10mm
-    if (effectiveScale >= 0.1) return 20;   // Far zoomed out: 20mm
-    if (effectiveScale >= 0.05) return 50;  // Very far: 50mm
+    if (effectiveScale >= 0.1) return 16;   // Far zoomed out: 20mm
+    if (effectiveScale >= 0.05) return 32;  // Very far: 50mm
     return 100; // Extremely far: 100mm
 }
 
@@ -367,10 +367,12 @@ function drawGrid() {
     const gridSpacing = getAdaptiveGridSpacing();
     const majorSpacing = gridSpacing * 10;
     
-    const startX = Math.floor(viewport.offsetX - canvas.width / 2 / viewport.scale);
-    const startY = Math.floor(viewport.offsetY - canvas.height / 2 / viewport.scale);
-    const endX = Math.ceil(viewport.offsetX + canvas.width / 2 / viewport.scale);
-    const endY = Math.ceil(viewport.offsetY + canvas.height / 2 / viewport.scale);
+    // Calculate visible range in MM, accounting for panning
+    // The viewport shows a region of the MM world from (minX, minY) to (maxX, maxY)
+    const minX = pixelToMM(0, 0).x;
+    const maxX = pixelToMM(canvas.width, 0).x;
+    const minY = pixelToMM(0, 0).y;
+    const maxY = pixelToMM(0, canvas.height).y;
     
     // Adapt line width to zoom level - thinner when zoomed out
     const lineWidthScale = Math.min(2, Math.max(0.5, 1 / Math.sqrt(viewport.scale)));
@@ -379,7 +381,8 @@ function drawGrid() {
     ctx.strokeStyle = '#eee';
     ctx.lineWidth = 1 * lineWidthScale;
     
-    for (let x = Math.floor(startX / gridSpacing) * gridSpacing; x <= endX; x += gridSpacing) {
+    // Draw vertical grid lines
+    for (let x = Math.floor(minX / gridSpacing) * gridSpacing; x <= maxX; x += gridSpacing) {
         const px = mmToPixel(x, 0).x;
         if (px >= 0 && px <= canvas.width) {
             ctx.beginPath();
@@ -388,7 +391,9 @@ function drawGrid() {
             ctx.stroke();
         }
     }
-    for (let y = Math.floor(startY / gridSpacing) * gridSpacing; y <= endY; y += gridSpacing) {
+    
+    // Draw horizontal grid lines
+    for (let y = Math.floor(minY / gridSpacing) * gridSpacing; y <= maxY; y += gridSpacing) {
         const py = mmToPixel(0, y).y;
         if (py >= 0 && py <= canvas.height) {
             ctx.beginPath();
@@ -402,7 +407,8 @@ function drawGrid() {
     ctx.strokeStyle = '#ccc';
     ctx.lineWidth = 2 * lineWidthScale;
     
-    for (let x = Math.floor(startX / majorSpacing) * majorSpacing; x <= endX; x += majorSpacing) {
+    // Draw major vertical grid lines
+    for (let x = Math.floor(minX / majorSpacing) * majorSpacing; x <= maxX; x += majorSpacing) {
         const px = mmToPixel(x, 0).x;
         if (px >= 0 && px <= canvas.width) {
             ctx.beginPath();
@@ -411,7 +417,9 @@ function drawGrid() {
             ctx.stroke();
         }
     }
-    for (let y = Math.floor(startY / majorSpacing) * majorSpacing; y <= endY; y += majorSpacing) {
+    
+    // Draw major horizontal grid lines
+    for (let y = Math.floor(minY / majorSpacing) * majorSpacing; y <= maxY; y += majorSpacing) {
         const py = mmToPixel(0, y).y;
         if (py >= 0 && py <= canvas.height) {
             ctx.beginPath();
@@ -716,12 +724,15 @@ function initSketchCanvas() {
         const mouseMM = pixelToMM(mouseX, mouseY);
         
         // Apply zoom
+        const oldScale = viewport.scale;
         viewport.scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, viewport.scale * zoomFactor));
         
         // Adjust offset to zoom toward mouse position
+        // The adjustment is: offset += (mouseMMAfter - mouseMM) which is equivalent to
+        // offset -= (mouseMM - mouseMMAfter)
         const mouseMMAfter = pixelToMM(mouseX, mouseY);
-        viewport.offsetX += (mouseMM.x - mouseMMAfter.x);
-        viewport.offsetY += (mouseMM.y - mouseMMAfter.y);
+        viewport.offsetX += (mouseMMAfter.x - mouseMM.x);
+        viewport.offsetY += (mouseMMAfter.y - mouseMM.y);
         
         drawCanvas();
         updateGridDisplay();
