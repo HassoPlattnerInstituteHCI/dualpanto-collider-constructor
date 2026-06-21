@@ -8,6 +8,79 @@
 let generatedOBJ = null;
 
 // ============================================
+// TOOL MANAGEMENT
+// ============================================
+
+function initToolShortcuts() {
+    window.addEventListener('keydown', (e) => {
+        // Tool selection keyboard shortcuts
+        if (e.key && !e.ctrlKey && !e.metaKey && !e.altKey) {
+            switch (e.key.toLowerCase()) {
+                case 'l':
+                    setTool('line');
+                    e.preventDefault();
+                    break;
+                case 'p':
+                    setTool('polygon');
+                    e.preventDefault();
+                    break;
+                case 'm':
+                    setTool('move');
+                    e.preventDefault();
+                    break;
+                case 'd':
+                    setTool('delete');
+                    e.preventDefault();
+                    break;
+            }
+        }
+    });
+}
+
+function setTool(toolName) {
+    currentTool = toolName;
+    
+    // Update UI
+    document.querySelectorAll('.tool-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.tool === toolName);
+    });
+    
+    // Sync with deletion mode
+    isDeleting = (toolName === 'delete');
+    
+    // Reset drawing states when switching tools
+    if (toolName !== 'line') {
+        isDrawing = false;
+        previewPoint = null;
+        startPointIndex = null;
+        newPointAdded = false;
+    }
+    if (toolName !== 'polygon') {
+        isDrawingPolygon = false;
+        polygonVertices = [];
+        polygonStartIndex = null;
+        polygonAddedPoints = [];
+    }
+    
+    // Clear move vertex state when switching away from move
+    if (toolName !== 'move') {
+        isMovingVertex = false;
+        moveVertexCandidates = [];
+        dragStartMM = null;
+        dragOriginalPositions = null;
+    }
+    
+    // Clear deletion candidates when switching away from delete
+    if (toolName !== 'delete') {
+        deletionCandidates = [];
+        polygonDeletionCandidates = [];
+    }
+    
+    drawCanvas();
+    updateStatus();
+}
+
+// ============================================
 // UI CONTROLS
 // ============================================
 
@@ -33,15 +106,18 @@ function initControls() {
         });
     }
     
-    // Delete mode button
+    // Tool selector buttons
+    document.querySelectorAll('.tool-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            setTool(btn.dataset.tool);
+        });
+    });
+    
+    // Delete mode button (for backwards compatibility)
     const deleteBtn = document.getElementById('deleteBtn');
     if (deleteBtn) {
         deleteBtn.addEventListener('click', () => {
-            isDeleting = !isDeleting;
-            deleteBtn.classList.toggle('active', isDeleting);
-            deletionCandidates = [];
-            drawCanvas();
-            updateStatus();
+            setTool('delete');
         });
     }
     
@@ -74,10 +150,29 @@ function updateStatus() {
     document.getElementById('segmentCount').textContent = `Segments: ${stats.segmentCount}`;
     
     const statusEl = document.getElementById('statusMessage');
-    if (isDeleting || optionKeyPressed) {
-        statusEl.textContent = deletionCandidates.length > 0 
-            ? `${deletionCandidates.length} segment(s) to delete - click to remove` 
-            : 'Delete mode: hover over segments to highlight';
+    
+    if (isDeleting || optionKeyPressed || currentTool === 'delete') {
+        if (polygonDeletionCandidates.length > 0) {
+            statusEl.textContent = `${polygonDeletionCandidates.length} polygon(s) to delete - click to remove`;
+        } else if (deletionCandidates.length > 0) {
+            statusEl.textContent = `${deletionCandidates.length} segment(s) to delete - click to remove`;
+        } else {
+            statusEl.textContent = 'Delete mode: hover over segments or polygons to highlight';
+        }
+    } else if (currentTool === 'polygon') {
+        if (isDrawingPolygon) {
+            statusEl.textContent = `Polygon: ${polygonVertices.length} vertices - click first point to close or press Enter/Escape`;
+        } else {
+            statusEl.textContent = stats.polygonCount > 0 
+                ? `${stats.polygonCount} polygon(s), ${stats.segmentCount} hallway segment(s)` 
+                : stats.segmentCount > 0 ? `${stats.segmentCount} hallway segment(s)` : 'Ready';
+        }
+    } else if (currentTool === 'move') {
+        if (moveVertexCandidates.length > 0) {
+            statusEl.textContent = `${moveVertexCandidates.length} vertex/vertices to move - click and drag`;
+        } else {
+            statusEl.textContent = 'Move mode: hover over vertices to highlight';
+        }
     } else {
         statusEl.textContent = stats.segmentCount > 0 ? 
             `${stats.segmentCount} hallway segment(s) drawn` : 'Ready';
@@ -97,8 +192,8 @@ function generate3DModel() {
         return;
     }
     
-    if (sketch.segments.length === 0) {
-        alert('Please draw at least one hallway segment.');
+    if (sketch.segments.length === 0 && (sketch.polygons || sketch.polygons.length === 0)) {
+        alert('Please draw at least one hallway segment or polygon.');
         return;
     }
     
@@ -131,6 +226,7 @@ document.addEventListener('DOMContentLoaded', () => {
     console.log('DOM loaded, initializing app...');
     initSketchCanvas();
     initControls();
+    initToolShortcuts();
     updateStatus();
     console.log('App initialized');
 });
@@ -141,6 +237,7 @@ window.onload = function() {
         console.log('Using window.onload fallback');
         initSketchCanvas();
         initControls();
+        initToolShortcuts();
         updateStatus();
     }
 };

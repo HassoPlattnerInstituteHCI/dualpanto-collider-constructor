@@ -16,7 +16,14 @@
 <body>
     <div class="container">
         <h1>Maze Extrusion Tool</h1>
-        <p class="subtitle">Draw 2D hallways, extrude with cutouts, export as OBJ</p>
+        <p class="subtitle">Draw 2D hallways and polygons, extrude with cutouts, export as OBJ</p>
+        
+        <div class="tool-selector">
+            <button class="tool-btn active" data-tool="line" title="Line Tool (L)">Line</button>
+            <button class="tool-btn" data-tool="polygon" title="Polygon Tool (P)">Polygon</button>
+            <button class="tool-btn" data-tool="move" title="Move Vertex (M)">Move</button>
+            <button class="tool-btn" data-tool="delete" title="Delete Tool (D)">Delete</button>
+        </div>
         
         <div class="controls">
             <div class="control-group">

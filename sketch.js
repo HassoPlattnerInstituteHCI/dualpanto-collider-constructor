@@ -7,7 +7,8 @@ let ctx;
 // Sketch data model
 const sketch = {
     points: [],       // Array of {x: number, y: number} in mm
-    segments: []      // Array of {start: index, end: index} referencing points
+    segments: [],     // Array of {start: index, end: index} referencing points
+    polygons: []      // Array of {vertices: [index, index, ...]} for polygon cutouts
 };
 
 // Viewport constants
@@ -36,13 +37,29 @@ let spaceKeyPressed = false;
 // Deletion state
 let isDeleting = false;           // Toggle state for delete mode
 let deletionCandidates = [];     // Array of segment indices to delete
+let polygonDeletionCandidates = []; // Array of polygon indices to delete
 let optionKeyPressed = false;    // Track Option/Alt key state
 
-// Drawing state
+// Tool state
+let currentTool = 'line';         // 'line' | 'polygon' | 'delete'
+
+// Drawing state (for line tool)
 let isDrawing = false;
 let previewPoint = null;
 let startPointIndex = null;
 let newPointAdded = false;
+
+// Polygon drawing state
+let isDrawingPolygon = false;
+let polygonVertices = [];         // Array of point indices for current polygon
+let polygonStartIndex = null;    // Index of first vertex for current polygon
+let polygonAddedPoints = [];     // Track indices of points added during current polygon drawing
+
+// Move vertex tool state
+let isMovingVertex = false;
+let moveVertexCandidates = [];  // Array of point indices to move
+let dragStartMM = null;          // Starting MM position of drag
+let dragOriginalPositions = null; // Original positions of vertices being moved
 
 // ============================================
 // COORDINATE TRANSFORMATIONS
@@ -255,18 +272,46 @@ function segmentIntersectsGridCell(p1, p2, cellX, cellY, gridSpacing) {
 }
 
 /**
- * Find all segments that pass through the grid cell at the given MM position
+ * Calculate distance from point to line segment
+ * @param {number} px - Point x coordinate
+ * @param {number} py - Point y coordinate
+ * @param {Object} p1 - Segment start point {x, y}
+ * @param {Object} p2 - Segment end point {x, y}
+ * @returns {number} - Distance from point to segment
+ */
+function distanceToSegment(px, py, p1, p2) {
+    // Vector from p1 to p2
+    const dx = p2.x - p1.x;
+    const dy = p2.y - p1.y;
+    const segLenSq = dx * dx + dy * dy;
+    
+    if (segLenSq === 0) return Math.hypot(px - p1.x, py - p1.y);
+    
+    // Projection of point onto the line
+    let t = ((px - p1.x) * dx + (py - p1.y) * dy) / segLenSq;
+    t = Math.max(0, Math.min(1, t));
+    
+    // Closest point on segment
+    const closestX = p1.x + t * dx;
+    const closestY = p1.y + t * dy;
+    
+    return Math.hypot(px - closestX, py - closestY);
+}
+
+/**
+ * Find all segments that are within a threshold distance from the given MM position
  * Returns array of segment indices
  */
 function findDeletionCandidates(mmX, mmY) {
-    const gridSpacing = getAdaptiveGridSpacing();
-    const cell = getGridCell(mmX, mmY);
+    const threshold = getAdaptiveGridSpacing() * 0.5; // Half a grid cell
     const candidates = [];
     
     sketch.segments.forEach((seg, idx) => {
         const p1 = sketch.points[seg.start];
         const p2 = sketch.points[seg.end];
-        if (segmentIntersectsGridCell(p1, p2, cell.x, cell.y, gridSpacing)) {
+        const dist = distanceToSegment(mmX, mmY, p1, p2);
+        
+        if (dist < threshold) {
             candidates.push(idx);
         }
     });
@@ -336,6 +381,407 @@ function cleanupZeroLengthSegments() {
     }
 }
 
+/**
+ * Remove orphaned points that were added during polygon drawing
+ * Call this when polygon is discarded (Escape or mouseleave)
+ */
+function removePolygonOrphanedPoints() {
+    if (polygonAddedPoints.length === 0) return;
+    
+    // Create a set of indices to delete for use in the deleteSegments pattern
+    const indicesToDelete = new Set(polygonAddedPoints);
+    
+    // Find all point indices that are still referenced
+    const usedPointIndices = new Set();
+    sketch.segments.forEach(seg => {
+        usedPointIndices.add(seg.start);
+        usedPointIndices.add(seg.end);
+    });
+    sketch.polygons.forEach(poly => {
+        poly.vertices.forEach(vIdx => usedPointIndices.add(vIdx));
+    });
+    
+    // Only keep points that are still referenced
+    const usedPoints = [];
+    const pointMap = new Map();
+    let newIndex = 0;
+    
+    sketch.points.forEach((p, oldIndex) => {
+        if (usedPointIndices.has(oldIndex) || !indicesToDelete.has(oldIndex)) {
+            pointMap.set(oldIndex, newIndex);
+            usedPoints.push(p);
+            newIndex++;
+        }
+    });
+    
+    sketch.points = usedPoints;
+    
+    // Remap segment indices
+    sketch.segments.forEach(seg => {
+        seg.start = pointMap.get(seg.start);
+        seg.end = pointMap.get(seg.end);
+    });
+    
+    // Remap polygon vertex indices
+    sketch.polygons.forEach(poly => {
+        poly.vertices = poly.vertices.map(vIdx => pointMap.get(vIdx));
+    });
+    
+    // Clear the tracking array
+    polygonAddedPoints = [];
+}
+
+// ============================================
+// POLYGON DELETION HELPERS
+// ============================================
+
+/**
+ * Check if a point is inside a polygon using ray-casting algorithm
+ * Includes a small buffer around edges for easier selection
+ * @param {Object} point - {x, y} in mm
+ * @param {Array} polyVertices - Array of point indices for the polygon
+ * @returns {boolean} - True if point is inside polygon or within buffer of an edge
+ */
+function pointInPolygon(point, polyVertices) {
+    const x = point.x;
+    const y = point.y;
+    let inside = false;
+    
+    // First, check if point is close to any edge (for easier selection)
+    const buffer = getAdaptiveGridSpacing() * 0.5;
+    for (let i = 0, j = polyVertices.length - 1; i < polyVertices.length; j = i++) {
+        const p1 = sketch.points[polyVertices[i]];
+        const p2 = sketch.points[polyVertices[j]];
+        const dist = distanceToSegment(x, y, p1, p2);
+        if (dist < buffer) {
+            return true; // Point is close enough to an edge
+        }
+    }
+    
+    // Standard ray-casting algorithm
+    for (let i = 0, j = polyVertices.length - 1; i < polyVertices.length; j = i++) {
+        const xi = sketch.points[polyVertices[i]].x;
+        const yi = sketch.points[polyVertices[i]].y;
+        const xj = sketch.points[polyVertices[j]].x;
+        const yj = sketch.points[polyVertices[j]].y;
+        
+        const intersect = ((yi > y) !== (yj > y)) &&
+            (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+        if (intersect) inside = !inside;
+    }
+    
+    return inside;
+}
+
+/**
+ * Find polygon deletion candidates at a given position
+ * @param {number} mmX - X coordinate in mm
+ * @param {number} mmY - Y coordinate in mm
+ * @returns {Array} - Array of polygon indices that contain the point
+ */
+function findPolygonDeletionCandidates(mmX, mmY) {
+    const candidates = [];
+    const point = { x: mmX, y: mmY };
+    
+    sketch.polygons.forEach((poly, idx) => {
+        if (poly.vertices.length >= 3 && pointInPolygon(point, poly.vertices)) {
+            candidates.push(idx);
+        }
+    });
+    
+    return candidates;
+}
+
+/**
+ * Delete polygons by index and remove orphaned points
+ */
+function deletePolygons(polygonIndices) {
+    const indicesToDelete = new Set(polygonIndices);
+    
+    // Remove polygons
+    sketch.polygons = sketch.polygons.filter((_, idx) => !indicesToDelete.has(idx));
+    
+    // Find all point indices used by remaining segments and polygons
+    const usedPointIndices = new Set();
+    sketch.segments.forEach(seg => {
+        usedPointIndices.add(seg.start);
+        usedPointIndices.add(seg.end);
+    });
+    sketch.polygons.forEach(poly => {
+        poly.vertices.forEach(vIdx => usedPointIndices.add(vIdx));
+    });
+    
+    // Build new points array and create mapping from old index to new index
+    const pointMap = new Map();
+    const newPoints = [];
+    let newIndex = 0;
+    
+    sketch.points.forEach((p, oldIndex) => {
+        if (usedPointIndices.has(oldIndex)) {
+            pointMap.set(oldIndex, newIndex);
+            newPoints.push(p);
+            newIndex++;
+        }
+    });
+    
+    sketch.points = newPoints;
+    
+    // Remap segment indices to new point indices
+    sketch.segments.forEach(seg => {
+        seg.start = pointMap.get(seg.start);
+        seg.end = pointMap.get(seg.end);
+    });
+    
+    // Remap polygon vertex indices to new point indices
+    sketch.polygons.forEach(poly => {
+        poly.vertices = poly.vertices.map(vIdx => pointMap.get(vIdx));
+    });
+    
+    polygonDeletionCandidates = [];
+    updateStatus();
+}
+
+// ============================================
+// MOVE VERTEX HELPERS
+// ============================================
+
+/**
+ * Find vertices that should be highlighted/moved based on cursor position.
+ * Selection algorithm:
+ * 1. Find all vertices closer to cursor than currently visible grid size
+ * 2. If these vertices are in multiple locations, select only those at the location closest to cursor
+ * 3. From these vertices, select only those connected to the edge which is closest to cursor
+ * 
+ * @param {number} mmX - Cursor X position in mm
+ * @param {number} mmY - Cursor Y position in mm
+ * @returns {Array} - Array of point indices to highlight/move
+ */
+function findMoveVertexCandidates(mmX, mmY) {
+    const gridSpacing = getAdaptiveGridSpacing();
+    
+    // Step 1: Find all vertices within gridSpacing distance of cursor
+    const closeVertices = [];
+    sketch.points.forEach((p, idx) => {
+        const dx = p.x - mmX;
+        const dy = p.y - mmY;
+        const dist = Math.hypot(dx, dy);
+        if (dist < gridSpacing) {
+            closeVertices.push(idx);
+        }
+    });
+    
+    if (closeVertices.length === 0) {
+        return [];
+    }
+    
+    // Step 2: Group close vertices by their location (x,y coordinates)
+    // Use a precision threshold for grouping to handle floating point coordinates
+    const locationGroups = []; // Array of {pointIndices: [], avgX, avgY}
+    const GROUP_PRECISION = 0.001; // 0.001mm precision for grouping
+    
+    closeVertices.forEach(idx => {
+        const p = sketch.points[idx];
+        
+        // Find existing group that this point matches
+        let foundGroup = null;
+        for (const group of locationGroups) {
+            const dx = p.x - group.avgX;
+            const dy = p.y - group.avgY;
+            if (Math.abs(dx) < GROUP_PRECISION && Math.abs(dy) < GROUP_PRECISION) {
+                foundGroup = group;
+                break;
+            }
+        }
+        
+        if (foundGroup) {
+            foundGroup.pointIndices.push(idx);
+            // Update average (not strictly necessary but keeps it accurate)
+            const total = foundGroup.pointIndices.length;
+            foundGroup.avgX = foundGroup.avgX * (total - 1) / total + p.x / total;
+            foundGroup.avgY = foundGroup.avgY * (total - 1) / total + p.y / total;
+        } else {
+            locationGroups.push({
+                pointIndices: [idx],
+                avgX: p.x,
+                avgY: p.y
+            });
+        }
+    });
+    
+    // Find the location group closest to cursor
+    let closestGroup = null;
+    let closestGroupDist = Infinity;
+    
+    for (const group of locationGroups) {
+        const dx = group.avgX - mmX;
+        const dy = group.avgY - mmY;
+        const dist = Math.hypot(dx, dy);
+        if (dist < closestGroupDist) {
+            closestGroupDist = dist;
+            closestGroup = group;
+        }
+    }
+    
+    if (!closestGroup || closestGroup.pointIndices.length === 0) {
+        return [];
+    }
+    
+    // Step 3: From vertices in closest group, select only those whose connected edge is closest to cursor
+    // For each vertex at the closest location, find its closest connected edge
+    // Then select only vertices whose closest edge is the overall closest
+    
+    // Build a map of vertex index -> array of edges it belongs to
+    const vertexEdges = new Map();
+    closestGroup.pointIndices.forEach(vIdx => {
+        vertexEdges.set(vIdx, []);
+    });
+    
+    // Add regular segments
+    sketch.segments.forEach((seg, segIdx) => {
+        if (closestGroup.pointIndices.includes(seg.start)) {
+            vertexEdges.get(seg.start).push({ 
+                segIdx,
+                start: seg.start,
+                end: seg.end,
+                isPolygon: false
+            });
+        }
+        if (closestGroup.pointIndices.includes(seg.end)) {
+            vertexEdges.get(seg.end).push({ 
+                segIdx,
+                start: seg.start,
+                end: seg.end,
+                isPolygon: false
+            });
+        }
+    });
+    
+    // Add polygon edges
+    sketch.polygons.forEach((poly, polyIdx) => {
+        if (poly.vertices.length < 3) return;
+        
+        for (let i = 0; i < poly.vertices.length; i++) {
+            const vIdx = poly.vertices[i];
+            if (closestGroup.pointIndices.includes(vIdx)) {
+                const prevIdx = poly.vertices[(i - 1 + poly.vertices.length) % poly.vertices.length];
+                const nextIdx = poly.vertices[(i + 1) % poly.vertices.length];
+                
+                // Vertex is part of two polygon edges
+                vertexEdges.get(vIdx).push({ 
+                    segIdx: -polyIdx - 1,
+                    start: prevIdx,
+                    end: vIdx,
+                    isPolygon: true
+                });
+                vertexEdges.get(vIdx).push({ 
+                    segIdx: -polyIdx - 1,
+                    start: vIdx,
+                    end: nextIdx,
+                    isPolygon: true
+                });
+            }
+        }
+    });
+    
+    // For each vertex, find its closest edge distance
+    const vertexClosestEdgeDist = new Map();
+    let globalClosestEdgeDist = Infinity;
+    
+    for (const [vIdx, edges] of vertexEdges) {
+        if (edges.length === 0) {
+            // Vertex not connected to any edge - use large distance
+            vertexClosestEdgeDist.set(vIdx, Infinity);
+            continue;
+        }
+        
+        // Find the closest edge for this vertex
+        let closestDist = Infinity;
+        for (const edgeInfo of edges) {
+            const p1 = sketch.points[edgeInfo.start];
+            const p2 = sketch.points[edgeInfo.end];
+            const dist = distanceToSegment(mmX, mmY, p1, p2);
+            if (dist < closestDist) {
+                closestDist = dist;
+            }
+        }
+        
+        vertexClosestEdgeDist.set(vIdx, closestDist);
+        
+        // Track global minimum
+        if (closestDist < globalClosestEdgeDist) {
+            globalClosestEdgeDist = closestDist;
+        }
+    }
+    
+    if (globalClosestEdgeDist === Infinity) {
+        // No edges found - return all vertices in closest group
+        return closestGroup.pointIndices;
+    }
+    
+    // Return only vertices whose closest edge distance equals the global minimum
+    return closestGroup.pointIndices.filter(vIdx => 
+        vertexClosestEdgeDist.get(vIdx) === globalClosestEdgeDist
+    );
+}
+
+/**
+ * Handle move vertex tool input
+ * @param {string} type - 'down', 'move', or 'up'
+ * @param {Object} mm - {x, y} cursor position in mm
+ */
+function handleVertexMoveInput(type, mm) {
+    if (type === 'move') {
+        if (isMovingVertex) {
+            // We're currently dragging - move the vertices
+            const snappedMM = snapToGrid(mm.x, mm.y);
+            
+            // Calculate offset from the SNAPPED drag start position
+            // Both start and current positions are snapped to ensure vertices land on grid
+            const dx = snappedMM.x - dragStartMM.x;
+            const dy = snappedMM.y - dragStartMM.y;
+            
+            // Move all candidate vertices from their original positions by the offset
+            moveVertexCandidates.forEach(idx => {
+                sketch.points[idx] = {
+                    x: dragOriginalPositions.get(idx).x + dx,
+                    y: dragOriginalPositions.get(idx).y + dy
+                };
+            });
+            
+            drawCanvas();
+        } else {
+            // Not dragging, just update candidates for highlighting
+            moveVertexCandidates = findMoveVertexCandidates(mm.x, mm.y);
+            drawCanvas();
+        }
+    } else if (type === 'down') {
+        // Start dragging if there are candidates
+        if (moveVertexCandidates.length > 0) {
+            isMovingVertex = true;
+            // Snap the drag start position to grid so vertices land on grid
+            const snappedStart = snapToGrid(mm.x, mm.y);
+            dragStartMM = { x: snappedStart.x, y: snappedStart.y };
+            
+            // Store original positions - these never change during the drag
+            dragOriginalPositions = new Map();
+            moveVertexCandidates.forEach(idx => {
+                dragOriginalPositions.set(idx, {
+                    x: sketch.points[idx].x,
+                    y: sketch.points[idx].y
+                });
+            });
+        }
+    } else if (type === 'up') {
+        if (isMovingVertex) {
+            isMovingVertex = false;
+            dragStartMM = null;
+            dragOriginalPositions = null;
+            // Keep moveVertexCandidates for continuous highlighting
+            drawCanvas();
+        }
+    }
+}
+
 // ============================================
 // SNAPPING HELPERS
 // ============================================
@@ -381,10 +827,17 @@ function snapToExistingPoint(mmX, mmY) {
 function clearSketch() {
     sketch.points = [];
     sketch.segments = [];
+    sketch.polygons = [];
     isDrawing = false;
     previewPoint = null;
     startPointIndex = null;
     newPointAdded = false;
+    isDrawingPolygon = false;
+    polygonVertices = [];
+    polygonStartIndex = null;
+    polygonAddedPoints = [];
+    polygonDeletionCandidates = [];
+    deletionCandidates = [];
 }
 
 function computeBoundingBox() {
@@ -395,6 +848,7 @@ function computeBoundingBox() {
     let minX = Infinity, maxX = -Infinity;
     let minY = Infinity, maxY = -Infinity;
     
+    // Include all points (including those used by polygons)
     sketch.points.forEach(p => {
         minX = Math.min(minX, p.x);
         maxX = Math.max(maxX, p.x);
@@ -408,7 +862,8 @@ function computeBoundingBox() {
 function getSketchStats() {
     return {
         pointCount: sketch.points.length,
-        segmentCount: sketch.segments.length
+        segmentCount: sketch.segments.length,
+        polygonCount: sketch.polygons.length
     };
 }
 
@@ -504,6 +959,39 @@ function drawSketch() {
         ctx.stroke();
     });
     
+    // Draw polygons - dark blue edges with semi-transparent fill
+    sketch.polygons.forEach((poly, polyIdx) => {
+        if (poly.vertices.length >= 3) {
+            const isPolygonCandidate = polygonDeletionCandidates.includes(polyIdx);
+            
+            // Draw polygon fill (semi-transparent blue or red for deletion candidates)
+            ctx.fillStyle = isPolygonCandidate ? 'rgba(255, 0, 0, 0.3)' : 'rgba(0, 100, 255, 0.3)';
+            ctx.beginPath();
+            const firstPixel = mmToPixel(sketch.points[poly.vertices[0]].x, sketch.points[poly.vertices[0]].y);
+            ctx.moveTo(firstPixel.x, firstPixel.y);
+            for (let i = 1; i < poly.vertices.length; i++) {
+                const pixel = mmToPixel(sketch.points[poly.vertices[i]].x, sketch.points[poly.vertices[i]].y);
+                ctx.lineTo(pixel.x, pixel.y);
+            }
+            // Close the path back to first vertex
+            ctx.lineTo(firstPixel.x, firstPixel.y);
+            ctx.fill();
+            
+            // Draw polygon edges (dark blue or red for deletion candidates)
+            ctx.strokeStyle = isPolygonCandidate ? '#ff0000' : '#004880';
+            ctx.lineWidth = isPolygonCandidate ? 3 : 2;
+            ctx.beginPath();
+            ctx.moveTo(firstPixel.x, firstPixel.y);
+            for (let i = 1; i < poly.vertices.length; i++) {
+                const pixel = mmToPixel(sketch.points[poly.vertices[i]].x, sketch.points[poly.vertices[i]].y);
+                ctx.lineTo(pixel.x, pixel.y);
+            }
+            // Close the path back to first vertex
+            ctx.lineTo(firstPixel.x, firstPixel.y);
+            ctx.stroke();
+        }
+    });
+    
     // Draw points
     ctx.fillStyle = '#4a90e2';
     sketch.points.forEach(p => {
@@ -512,10 +1000,23 @@ function drawSketch() {
         ctx.arc(pixel.x, pixel.y, 3, 0, Math.PI * 2);
         ctx.fill();
     });
+    
+    // Draw move vertex candidates in orange
+    if (currentTool === 'move' && moveVertexCandidates.length > 0) {
+        ctx.fillStyle = '#ffa500';
+        moveVertexCandidates.forEach(idx => {
+            const p = sketch.points[idx];
+            const pixel = mmToPixel(p.x, p.y);
+            ctx.beginPath();
+            ctx.arc(pixel.x, pixel.y, 5, 0, Math.PI * 2);
+            ctx.fill();
+        });
+    }
 }
 
 function drawPreview() {
-    if (isDrawing && startPointIndex !== null) {
+    // Draw line tool preview
+    if (currentTool === 'line' && isDrawing && startPointIndex !== null) {
         const startPt = sketch.points[startPointIndex];
         const startPixel = mmToPixel(startPt.x, startPt.y);
         
@@ -543,6 +1044,58 @@ function drawPreview() {
             ctx.beginPath();
             ctx.arc(startPixel.x, startPixel.y, 4, 0, Math.PI * 2);
             ctx.fill();
+        }
+    }
+    
+    // Draw polygon tool preview
+    if (currentTool === 'polygon' && isDrawingPolygon && polygonVertices.length > 0) {
+        // Get the current mouse position for preview
+        const previewPixel = previewPoint ? mmToPixel(previewPoint.x, previewPoint.y) : null;
+        
+        // Draw preview line from last vertex to cursor
+        if (previewPixel) {
+            const lastVertex = sketch.points[polygonVertices[polygonVertices.length - 1]];
+            const lastPixel = mmToPixel(lastVertex.x, lastVertex.y);
+            
+            // Draw preview line (dark blue dashed)
+            ctx.strokeStyle = '#004880';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([4, 4]);
+            ctx.beginPath();
+            ctx.moveTo(lastPixel.x, lastPixel.y);
+            ctx.lineTo(previewPixel.x, previewPixel.y);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            
+            // Draw preview point
+            ctx.fillStyle = '#004880';
+            ctx.beginPath();
+            ctx.arc(previewPixel.x, previewPixel.y, 3, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        
+        // Highlight the first vertex to show where to click to close
+        const firstVertex = sketch.points[polygonStartIndex];
+        const firstPixel = mmToPixel(firstVertex.x, firstVertex.y);
+        ctx.fillStyle = '#0080ff';
+        ctx.beginPath();
+        ctx.arc(firstPixel.x, firstPixel.y, 5, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Draw current polygon vertices being placed (as a preview polygon with dashed lines)
+        if (polygonVertices.length > 1) {
+            ctx.strokeStyle = '#004880';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([4, 4]);
+            ctx.beginPath();
+            const firstPx = mmToPixel(sketch.points[polygonVertices[0]].x, sketch.points[polygonVertices[0]].y);
+            ctx.moveTo(firstPx.x, firstPx.y);
+            for (let i = 1; i < polygonVertices.length; i++) {
+                const px = mmToPixel(sketch.points[polygonVertices[i]].x, sketch.points[polygonVertices[i]].y);
+                ctx.lineTo(px.x, px.y);
+            }
+            ctx.stroke();
+            ctx.setLineDash([]);
         }
     }
 }
@@ -575,14 +1128,20 @@ function handleCanvasInput(type, mouseX, mouseY) {
     const snappedMM = snapToExistingPoint(mm.x, mm.y);
     
     // In deletion mode (toggle or Alt/Option key), handle differently
-    if (isDeleting || optionKeyPressed) {
+    if (currentTool === 'delete' || optionKeyPressed) {
         if (type === 'move') {
             // Update deletion candidates as cursor moves
             deletionCandidates = findDeletionCandidates(snappedMM.x, snappedMM.y);
+            polygonDeletionCandidates = findPolygonDeletionCandidates(snappedMM.x, snappedMM.y);
             drawCanvas();
         } else if (type === 'up') {
             // Delete the candidates on click release
-            if (deletionCandidates.length > 0) {
+            if (polygonDeletionCandidates.length > 0) {
+                deletePolygons(polygonDeletionCandidates);
+                polygonDeletionCandidates = [];
+                deletionCandidates = [];
+                drawCanvas();
+            } else if (deletionCandidates.length > 0) {
                 deleteSegments(deletionCandidates);
                 deletionCandidates = [];
                 drawCanvas();
@@ -591,23 +1150,29 @@ function handleCanvasInput(type, mouseX, mouseY) {
         return;  // Don't handle drawing in deletion mode
     }
     
-    // Original drawing logic
+    // Polygon drawing logic
+    if (currentTool === 'polygon') {
+        handlePolygonInput(type, snappedMM);
+        return;
+    }
+    
+    // Move vertex tool logic
+    if (currentTool === 'move') {
+        handleVertexMoveInput(type, mm);
+        return; // Move tool handles everything, no fall through
+    }
+    
+    // Line drawing logic
     if (type === 'down') {
         if (!isDrawing) {
-            const nearestIndex = findNearestPoint(snappedMM.x, snappedMM.y, SNAP_RADIUS / viewport.scale);
-            
-            if (nearestIndex !== null) {
-                startPointIndex = nearestIndex;
-                isDrawing = true;
-                previewPoint = null;
-                newPointAdded = false;
-            } else {
-                startPointIndex = sketch.points.length;
-                sketch.points.push({ x: snappedMM.x, y: snappedMM.y });
-                isDrawing = true;
-                previewPoint = null;
-                newPointAdded = true;
-            }
+            // ALWAYS create a new point, even when snapping to existing ones
+            // This allows independent vertex movement in the move tool
+            const newIndex = sketch.points.length;
+            sketch.points.push({ x: snappedMM.x, y: snappedMM.y });
+            startPointIndex = newIndex;
+            isDrawing = true;
+            previewPoint = null;
+            newPointAdded = true;
             drawCanvas();
         }
     } else if (type === 'move') {
@@ -629,19 +1194,11 @@ function handleCanvasInput(type, mouseX, mouseY) {
                 );
                 
                 if (dist > 0.01) {
-                    const nearestIndex = findNearestPoint(previewPoint.x, previewPoint.y, SNAP_RADIUS / viewport.scale);
-                    let endPointIndex;
-                    let endPointAdded = false;
+                    // ALWAYS create a new end point, even when snapping
+                    const endPointIndex = sketch.points.length;
+                    sketch.points.push({ x: previewPoint.x, y: previewPoint.y });
                     
-                    if (nearestIndex !== null) {
-                        endPointIndex = nearestIndex;
-                    } else {
-                        endPointIndex = sketch.points.length;
-                        sketch.points.push({ x: previewPoint.x, y: previewPoint.y });
-                        endPointAdded = true;
-                    }
-                    
-                    // Don't create zero-length segments (same start and end point or same coordinates)
+                    // Check if this would create a zero-length segment
                     const endPt = sketch.points[endPointIndex];
                     const endDist = Math.hypot(
                         endPt.x - startPt.x,
@@ -653,7 +1210,7 @@ function handleCanvasInput(type, mouseX, mouseY) {
                             end: endPointIndex
                         });
                         segmentCreated = true;
-                    } else if (endPointAdded) {
+                    } else {
                         // Remove the end point that was added but not used
                         sketch.points.pop();
                     }
@@ -671,6 +1228,76 @@ function handleCanvasInput(type, mouseX, mouseY) {
             previewPoint = null;
             startPointIndex = null;
             newPointAdded = false;
+            drawCanvas();
+        }
+    }
+}
+
+// ============================================
+// POLYGON INPUT HANDLING
+// ============================================
+
+/**
+ * Handle polygon drawing input
+ * @param {string} type - 'down', 'move', or 'up'
+ * @param {Object} snappedMM - {x, y} snapped to grid/existing points
+ */
+function handlePolygonInput(type, snappedMM) {
+    if (type === 'down') {
+        // Find nearest existing point (for snapping, but we'll create a new point)
+        const nearestIndex = findNearestPoint(snappedMM.x, snappedMM.y, SNAP_RADIUS / viewport.scale);
+        
+        if (!isDrawingPolygon) {
+            // Start a new polygon
+            polygonAddedPoints = []; // Reset tracking for new polygon
+            
+            // ALWAYS create a new point, even when snapping to existing ones
+            // This allows independent vertex movement in the move tool
+            polygonStartIndex = sketch.points.length;
+            sketch.points.push({ x: snappedMM.x, y: snappedMM.y });
+            polygonVertices = [polygonStartIndex];
+            polygonAddedPoints.push(polygonStartIndex);
+            isDrawingPolygon = true;
+            drawCanvas();
+        } else {
+            // Continuing an existing polygon
+            // Check if clicked on first vertex (to close polygon)
+            // We need to check if the snapped position is close to the first vertex's position
+            if (polygonVertices.length >= 3) {
+                const firstVertex = sketch.points[polygonStartIndex];
+                const distToFirst = Math.hypot(
+                    snappedMM.x - firstVertex.x,
+                    snappedMM.y - firstVertex.y
+                );
+                if (distToFirst < SNAP_RADIUS / viewport.scale) {
+                    // Close the polygon - add to polygons array
+                    sketch.polygons.push({
+                        vertices: [...polygonVertices]
+                    });
+                    
+                    // Reset polygon drawing state
+                    isDrawingPolygon = false;
+                    polygonVertices = [];
+                    polygonStartIndex = null;
+                    polygonAddedPoints = [];
+                    
+                    drawCanvas();
+                    updateStatus();
+                    return;
+                }
+            }
+            
+            // ALWAYS create a new point for polygon vertices
+            const newIndex = sketch.points.length;
+            sketch.points.push({ x: snappedMM.x, y: snappedMM.y });
+            polygonVertices.push(newIndex);
+            polygonAddedPoints.push(newIndex);
+            drawCanvas();
+        }
+    } else if (type === 'move') {
+        if (isDrawingPolygon) {
+            // Update preview point for cursor tracking
+            previewPoint = snappedMM;
             drawCanvas();
         }
     }
@@ -716,6 +1343,34 @@ function initSketchCanvas() {
             optionKeyPressed = true;
             e.preventDefault();
         }
+        
+        // Polygon tool keyboard shortcuts
+        if (currentTool === 'polygon') {
+            if (e.code === 'Escape') {
+                // Cancel polygon drawing
+                if (isDrawingPolygon) {
+                    isDrawingPolygon = false;
+                    polygonVertices = [];
+                    polygonStartIndex = null;
+                    removePolygonOrphanedPoints();
+                    drawCanvas();
+                    updateStatus();
+                }
+                e.preventDefault();
+            } else if (e.code === 'Enter' && isDrawingPolygon && polygonVertices.length >= 3) {
+                // Auto-close polygon by connecting last vertex to first
+                sketch.polygons.push({
+                    vertices: [...polygonVertices]
+                });
+                isDrawingPolygon = false;
+                polygonVertices = [];
+                polygonStartIndex = null;
+                polygonAddedPoints = [];
+                drawCanvas();
+                updateStatus();
+                e.preventDefault();
+            }
+        }
     });
     
     window.addEventListener('keyup', (e) => {
@@ -738,7 +1393,8 @@ function initSketchCanvas() {
         const mouseY = e.clientY - rect.top;
         
         // Check if this is a pan gesture (middle mouse button or Space + left click)
-        if (e.button === 1 || (e.button === 0 && spaceKeyPressed)) {
+        // But don't pan if we're in move tool and about to drag vertices
+        if ((e.button === 1 || (e.button === 0 && spaceKeyPressed)) && currentTool !== 'move') {
             isPanning = true;
             panStart = { x: mouseX, y: mouseY };
             e.preventDefault();
@@ -753,8 +1409,8 @@ function initSketchCanvas() {
         const mouseX = e.clientX - rect.left;
         const mouseY = e.clientY - rect.top;
         
-        // Handle panning
-        if (isPanning) {
+        // Handle panning (but not when moving vertices)
+        if (isPanning && !isMovingVertex) {
             const dx = mouseX - panStart.x;
             const dy = mouseY - panStart.y;
             viewport.panX -= dx;
@@ -788,6 +1444,14 @@ function initSketchCanvas() {
                 sketch.points.pop();
                 newPointAdded = false;
             }
+            drawCanvas();
+        }
+        if (isDrawingPolygon) {
+            // Cancel polygon drawing on mouse leave
+            isDrawingPolygon = false;
+            polygonVertices = [];
+            polygonStartIndex = null;
+            removePolygonOrphanedPoints();
             drawCanvas();
         }
         if (isPanning) {

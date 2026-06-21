@@ -89,6 +89,56 @@ function createExtrudedPrism(points2D, zMin, zMax) {
 }
 
 /**
+ * Create an extruded prism from polygon vertices
+ * Creates a solid prism that can be subtracted from the base
+ * Normals point outward from the prism for proper CSG operations
+ */
+function createPolygonPrism(vertices2D, zMin, zMax) {
+    if (vertices2D.length < 3) return null;
+    
+    // Ensure vertices are in counter-clockwise order (positive area)
+    let pts = vertices2D;
+    if (signedArea2D(pts) < 0) pts = pts.slice().reverse();
+    
+    const polygons = [];
+    const n = pts.length;
+    
+    // Bottom face - normal pointing down (outward from prism)
+    const bottomVerts = pts.map(p => new CSG.Vertex([p.x, p.y, zMin], [0, 0, -1]));
+    polygons.push(new CSG.Polygon(bottomVerts.slice().reverse()));
+    
+    // Top face - normal pointing up (outward from prism)
+    const topVerts = pts.map(p => new CSG.Vertex([p.x, p.y, zMax], [0, 0, 1]));
+    polygons.push(new CSG.Polygon(topVerts));
+    
+    // Side faces - normals pointing outward from the prism
+    for (let i = 0; i < n; i++) {
+        const j = (i + 1) % n;
+        const p1 = pts[i], p2 = pts[j];
+        const ex = p2.x - p1.x, ey = p2.y - p1.y, len = Math.hypot(ex, ey) || 1;
+        // Normal pointing outward (perpendicular to edge, pointing away from polygon center)
+        const nx = ey / len, ny = -ex / len;
+        
+        polygons.push(new CSG.Polygon([
+            new CSG.Vertex([p1.x, p1.y, zMin], [nx, ny, 0]),
+            new CSG.Vertex([p2.x, p2.y, zMin], [nx, ny, 0]),
+            new CSG.Vertex([p2.x, p2.y, zMax], [nx, ny, 0]),
+            new CSG.Vertex([p1.x, p1.y, zMax], [nx, ny, 0])
+        ]));
+    }
+    
+    return CSG.fromPolygons(polygons);
+}
+
+/**
+ * Compute bounding box that includes all points from sketch
+ */
+function computeBoundingBoxWithPolygons(sketch, margin) {
+    // This is the same as computeBoundingBoxWithMargin since polygons use same points
+    return computeBoundingBoxWithMargin(sketch, margin);
+}
+
+/**
  * Computes all junction shapes and segment end-cap connectors cleanly
  */
 function generateCSGModel(sketch, extrusionHeight, hallwayWidth, miterLimit = 4) {
@@ -96,7 +146,10 @@ function generateCSGModel(sketch, extrusionHeight, hallwayWidth, miterLimit = 4)
     const maxMiterDist = hallwayWidth * miterLimit;
     const armsMap = buildJunctionArms(sketch);
     
-    let base = createBaseCube(sketch, extrusionHeight, hallwayWidth * 2);
+    // Create base cube that encloses all segments and polygons
+    // Use hallwayWidth * 2 as padding - this will be added to the actual bounding box
+    const basePadding = hallwayWidth * 2;
+    let base = createBaseCube(sketch, extrusionHeight, basePadding);
 
     // Maps to store the clean transition line for each segment end
     // key: segIndex -> { startLeft, startRight, endLeft, endRight }
@@ -177,6 +230,22 @@ function generateCSGModel(sketch, extrusionHeight, hallwayWidth, miterLimit = 4)
             base = base.subtract(trunkVolume);
         }
     });
+
+    // 3. Carve out polygon cutouts
+    if (sketch.polygons) {
+        sketch.polygons.forEach(poly => {
+            if (poly.vertices.length >= 3) {
+                // Get the vertices for this polygon
+                const polyVertices = poly.vertices.map(vIdx => sketch.points[vIdx]);
+                
+                // Create a prism for the polygon and subtract it from the base
+                const polyVolume = createPolygonPrism(polyVertices, 0, extrusionHeight);
+                if (polyVolume) {
+                    base = base.subtract(polyVolume);
+                }
+            }
+        });
+    }
 
     return base;
 }

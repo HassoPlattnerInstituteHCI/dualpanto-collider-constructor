@@ -28,6 +28,44 @@ h1 {
     margin-bottom: 20px;
 }
 
+/* Tool selector */
+.tool-selector {
+    display: flex;
+    gap: 5px;
+    margin-bottom: 15px;
+    background: #fff;
+    padding: 8px;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+}
+
+.tool-btn {
+    padding: 8px 16px;
+    border: 2px solid #ccc;
+    background: #fff;
+    border-radius: 4px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+    color: #333;
+}
+
+.tool-btn:hover {
+    background: #f0f0f0;
+    border-color: #999;
+}
+
+.tool-btn.active {
+    background: #004880;
+    color: white;
+    border-color: #004880;
+}
+
+.tool-btn.active:hover {
+    background: #00355a;
+    border-color: #00355a;
+}
+
 .controls {
     background: #fff;
     padding: 15px 20px;
