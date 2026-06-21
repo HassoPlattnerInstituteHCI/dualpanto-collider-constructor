@@ -42,6 +42,7 @@ let optionKeyPressed = false;    // Track Option/Alt key state
 let isDrawing = false;
 let previewPoint = null;
 let startPointIndex = null;
+let newPointAdded = false;
 
 // ============================================
 // COORDINATE TRANSFORMATIONS
@@ -118,6 +119,36 @@ function updateGridDisplay() {
     if (gridSizeEl) {
         gridSizeEl.textContent = `Grid: ${gridInfo.minorSpacing.toFixed(1)}mm/${gridInfo.majorSpacing.toFixed(1)}mm`;
     }
+}
+
+// ============================================
+// SVG OVERLAY
+// ============================================
+
+// SVG dimensions: viewBox="0 0 597.4 597.4" corresponds to 380mm x 380mm in real life
+const SVG_VIEWBOX_WIDTH = 597.4;
+const SVG_REAL_WIDTH_MM = 380; // 38cm
+const SVG_SCALE_FACTOR = SVG_REAL_WIDTH_MM / SVG_VIEWBOX_WIDTH; // mm per SVG viewBox unit
+
+/**
+ * Update the SVG overlay position and scale to match the viewport
+ */
+function updateSVGOverlay() {
+    const svgOverlay = document.getElementById('emberAreaOverlay');
+    if (!svgOverlay) return;
+    
+    // The SVG represents 380mm x 380mm in real life, centered at the world origin (0, 0) in MM
+    // So the SVG spans from (-190, -190) to (+190, +190) in MM coordinates
+    
+    // Convert the SVG corners from MM to pixels
+    const tlPixel = mmToPixel(-190, -190);
+    const brPixel = mmToPixel(190, 190);
+    
+    // Position and size the SVG element
+    svgOverlay.style.left = `${tlPixel.x}px`;
+    svgOverlay.style.top = `${tlPixel.y}px`;
+    svgOverlay.style.width = `${brPixel.x - tlPixel.x}px`;
+    svgOverlay.style.height = `${brPixel.y - tlPixel.y}px`;
 }
 
 // ============================================
@@ -284,6 +315,27 @@ function deleteSegments(segmentIndices) {
     updateStatus();
 }
 
+/**
+ * Remove zero-length segments (where start and end are the same point or same coordinates)
+ */
+function cleanupZeroLengthSegments() {
+    const zeroLengthIndices = [];
+    
+    sketch.segments.forEach((seg, idx) => {
+        const p1 = sketch.points[seg.start];
+        const p2 = sketch.points[seg.end];
+        const dist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+        
+        if (seg.start === seg.end || dist < 0.01) {
+            zeroLengthIndices.push(idx);
+        }
+    });
+    
+    if (zeroLengthIndices.length > 0) {
+        deleteSegments(zeroLengthIndices);
+    }
+}
+
 // ============================================
 // SNAPPING HELPERS
 // ============================================
@@ -332,6 +384,7 @@ function clearSketch() {
     isDrawing = false;
     previewPoint = null;
     startPointIndex = null;
+    newPointAdded = false;
 }
 
 function computeBoundingBox() {
@@ -508,8 +561,9 @@ function drawCanvas() {
     drawSketch();
     drawPreview();
     
-    // Update grid size display after drawing
+    // Update grid size display and SVG overlay after drawing
     updateGridDisplay();
+    updateSVGOverlay();
 }
 
 // ============================================
@@ -546,11 +600,13 @@ function handleCanvasInput(type, mouseX, mouseY) {
                 startPointIndex = nearestIndex;
                 isDrawing = true;
                 previewPoint = null;
+                newPointAdded = false;
             } else {
                 startPointIndex = sketch.points.length;
                 sketch.points.push({ x: snappedMM.x, y: snappedMM.y });
                 isDrawing = true;
                 previewPoint = null;
+                newPointAdded = true;
             }
             drawCanvas();
         }
@@ -563,6 +619,8 @@ function handleCanvasInput(type, mouseX, mouseY) {
         if (isDrawing) {
             isDrawing = false;
             
+            let segmentCreated = false;
+            
             if (previewPoint) {
                 const startPt = sketch.points[startPointIndex];
                 const dist = Math.hypot(
@@ -573,23 +631,46 @@ function handleCanvasInput(type, mouseX, mouseY) {
                 if (dist > 0.01) {
                     const nearestIndex = findNearestPoint(previewPoint.x, previewPoint.y, SNAP_RADIUS / viewport.scale);
                     let endPointIndex;
+                    let endPointAdded = false;
                     
                     if (nearestIndex !== null) {
                         endPointIndex = nearestIndex;
                     } else {
                         endPointIndex = sketch.points.length;
                         sketch.points.push({ x: previewPoint.x, y: previewPoint.y });
+                        endPointAdded = true;
                     }
                     
-                    sketch.segments.push({
-                        start: startPointIndex,
-                        end: endPointIndex
-                    });
+                    // Don't create zero-length segments (same start and end point or same coordinates)
+                    const endPt = sketch.points[endPointIndex];
+                    const endDist = Math.hypot(
+                        endPt.x - startPt.x,
+                        endPt.y - startPt.y
+                    );
+                    if (startPointIndex !== endPointIndex && endDist > 0.01) {
+                        sketch.segments.push({
+                            start: startPointIndex,
+                            end: endPointIndex
+                        });
+                        segmentCreated = true;
+                    } else if (endPointAdded) {
+                        // Remove the end point that was added but not used
+                        sketch.points.pop();
+                    }
                 }
             }
             
+            // If a new point was added but no segment was created, remove the orphaned point
+            if (newPointAdded && !segmentCreated) {
+                sketch.points.pop();
+            }
+            
+            // Clean up any zero-length segments and orphaned points
+            cleanupZeroLengthSegments();
+            
             previewPoint = null;
             startPointIndex = null;
+            newPointAdded = false;
             drawCanvas();
         }
     }
@@ -702,6 +783,11 @@ function initSketchCanvas() {
             isDrawing = false;
             previewPoint = null;
             startPointIndex = null;
+            // Remove orphaned point if one was added but no segment was created
+            if (newPointAdded) {
+                sketch.points.pop();
+                newPointAdded = false;
+            }
             drawCanvas();
         }
         if (isPanning) {
@@ -761,6 +847,9 @@ function initSketchCanvas() {
             handleCanvasInput('up', touch.clientX - rect.left, touch.clientY - rect.top);
         }
     });
+    
+    // Clean up any existing zero-length segments on initialization
+    cleanupZeroLengthSegments();
     
     drawCanvas();
 }

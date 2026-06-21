@@ -1,6 +1,24 @@
 // objExporter.js - OBJ File Export Logic
 
 /**
+ * Apply -90 degree rotation around X axis AND mirror along Z axis to a vertex
+ * This matches Unity's expected coordinate system
+ * 
+ * Transformations applied:
+ * 1. Mirror along Z: (x, y, z) -> (x, y, -z)
+ * 2. Rotate -90° around X: (x, y, z) -> (x, z, -y)
+ * 
+ * Combined: (x, y, z) -> (x, -z, -y)
+ */
+function transformForUnity(v) {
+    return {
+        x: -v.x,
+        y: v.z,  // mirror Z then rotate
+        z: -v.y   // from rotation
+    };
+}
+
+/**
  * Convert CSG model to OBJ format string
  * @param {CSG} csg - CSG solid to export
  * @returns {string} OBJ format text
@@ -16,7 +34,7 @@ function csgToOBJ(csg) {
     const faces = [];
     const vertexMap = new Map(); // Maps vertex coordinates to index
     
-    // First pass: collect all unique vertices
+    // First pass: collect all unique vertices and apply rotation
     const allVertices = [];
     polygons.forEach(polygon => {
         polygon.vertices.forEach(v => {
@@ -24,22 +42,29 @@ function csgToOBJ(csg) {
         });
     });
     
-    // Create vertex map with deduplication
+    // Create vertex map with deduplication and transformation
     allVertices.forEach((pos, i) => {
-        const key = `${pos.x.toFixed(6)},${pos.y.toFixed(6)},${pos.z.toFixed(6)}`;
+        // Apply Unity coordinate transformation
+        const transformedPos = transformForUnity(pos);
+        const key = `${transformedPos.x.toFixed(6)},${transformedPos.y.toFixed(6)},${transformedPos.z.toFixed(6)}`;
         if (!vertexMap.has(key)) {
             vertexMap.set(key, vertices.length + 1); // OBJ indices start at 1
-            vertices.push({ x: pos.x, y: pos.y, z: pos.z });
+            vertices.push(transformedPos);
         }
     });
     
-    // Second pass: create faces
+    // Second pass: create faces (using transformed positions for lookup)
+    // Note: Mirror transformations reverse polygon winding order.
+    // Reverse face vertex order to maintain correct winding after transform.
     polygons.forEach(polygon => {
         const faceIndices = polygon.vertices.map(v => {
-            const key = `${v.pos.x.toFixed(6)},${v.pos.y.toFixed(6)},${v.pos.z.toFixed(6)}`;
+            // Apply same transformation to get the key
+            const transformedPos = transformForUnity(v.pos);
+            const key = `${transformedPos.x.toFixed(6)},${transformedPos.y.toFixed(6)},${transformedPos.z.toFixed(6)}`;
             return vertexMap.get(key);
         });
-        faces.push(faceIndices);
+        // Reverse vertex order to fix winding after mirroring
+        faces.push(faceIndices.reverse());
     });
     
     // Build OBJ string

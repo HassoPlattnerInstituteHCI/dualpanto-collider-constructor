@@ -159,6 +159,7 @@ h1 {
     box-shadow: 0 2px 10px rgba(0,0,0,0.1);
     overflow: hidden;
     margin-bottom: 15px;
+    position: relative;
 }
 
 #sketchCanvas {
@@ -167,6 +168,13 @@ h1 {
     height: 600px;
     cursor: crosshair;
     touch-action: none;
+}
+
+.overlay-svg {
+    position: absolute;
+    pointer-events: none;
+    z-index: 5;
+    opacity: 0.7;
 }
 
 .status-bar {
