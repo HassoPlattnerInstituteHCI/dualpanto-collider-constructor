@@ -41,19 +41,74 @@ function signedArea2D(points) {
     return area / 2;
 }
 
+function groupVerticesByPosition(sketch) {
+    const positionGroups = new Map(); // key: stringified coords -> array of point indices
+    
+    sketch.points.forEach((point, index) => {
+        // Use toFixed for consistent string representation with same precision as move tool
+        const key = `${point.x.toFixed(6)},${point.y.toFixed(6)}`;
+        if (!positionGroups.has(key)) {
+            positionGroups.set(key, []);
+        }
+        positionGroups.get(key).push(index);
+    });
+    
+    return positionGroups;
+}
+
 function buildJunctionArms(sketch) {
+    const positionGroups = groupVerticesByPosition(sketch);
+    const pointToPosition = new Map(); // point index -> position key
+    
+    // Map each point to its position group
+    sketch.points.forEach((point, index) => {
+        const key = `${point.x.toFixed(6)},${point.y.toFixed(6)}`;
+        pointToPosition.set(index, key);
+    });
+    
+    // Build arms map: position key -> array of arms
     const arms = new Map();
-    sketch.points.forEach((_, idx) => arms.set(idx, []));
+    
+    // Initialize all positions
+    positionGroups.forEach((pointIndices, positionKey) => {
+        arms.set(positionKey, []);
+    });
+    
+    // Populate arms by processing segments
     sketch.segments.forEach((seg, segIndex) => {
         const p1 = sketch.points[seg.start], p2 = sketch.points[seg.end];
         const dx = p2.x - p1.x, dy = p2.y - p1.y, len = Math.hypot(dx, dy);
         if (len < 0.001) return;
-        const dStart = { x: dx / len, y: dy / len }, dEnd = { x: -dx / len, y: -dy / len };
-        arms.get(seg.start).push({ segIndex, dir: dStart, angle: Math.atan2(dStart.y, dStart.x), isStart: true });
-        arms.get(seg.end).push({ segIndex, dir: dEnd, angle: Math.atan2(dEnd.y, dEnd.x), isStart: false });
+        
+        const dStart = { x: dx / len, y: dy / len };
+        const dEnd = { x: -dx / len, y: -dy / len };
+        
+        const startKey = pointToPosition.get(seg.start);
+        const endKey = pointToPosition.get(seg.end);
+        
+        // Add arm to start position
+        arms.get(startKey).push({ 
+            segIndex, 
+            dir: dStart, 
+            angle: Math.atan2(dStart.y, dStart.x), 
+            isStart: true,
+            pointIndices: positionGroups.get(startKey) // all points at this position
+        });
+        
+        // Add arm to end position
+        arms.get(endKey).push({ 
+            segIndex, 
+            dir: dEnd, 
+            angle: Math.atan2(dEnd.y, dEnd.x), 
+            isStart: false,
+            pointIndices: positionGroups.get(endKey) // all points at this position
+        });
     });
+    
+    // Sort arms by angle for proper junction ordering
     arms.forEach(list => list.sort((a, b) => a.angle - b.angle));
-    return arms;
+    
+    return { arms, positionGroups, pointToPosition };
 }
 
 /**
@@ -144,7 +199,7 @@ function computeBoundingBoxWithPolygons(sketch, margin) {
 function generateCSGModel(sketch, extrusionHeight, hallwayWidth, miterLimit = 4) {
     const r = hallwayWidth / 2;
     const maxMiterDist = hallwayWidth * miterLimit;
-    const armsMap = buildJunctionArms(sketch);
+    const { arms, positionGroups } = buildJunctionArms(sketch);
     
     // Create base cube that encloses all segments and polygons
     // Use hallwayWidth * 2 as padding - this will be added to the actual bounding box
@@ -157,8 +212,10 @@ function generateCSGModel(sketch, extrusionHeight, hallwayWidth, miterLimit = 4)
     sketch.segments.forEach((_, idx) => segCaps.set(idx, {}));
 
     // 1. Generate Junction Rooms and map out segment connection lines
-    armsMap.forEach((armList, pointIndex) => {
-        const point = sketch.points[pointIndex];
+    arms.forEach((armList, positionKey) => {
+        // Get a representative point for this position
+        const pointIndices = positionGroups.get(positionKey);
+        const point = sketch.points[pointIndices[0]];
         const n = armList.length;
         if (n === 0) return;
 
@@ -169,9 +226,12 @@ function generateCSGModel(sketch, extrusionHeight, hallwayWidth, miterLimit = 4)
             const leftPt = vAdd(point, vScale(nrm, r));
             const rightPt = vSub(point, vScale(nrm, r));
             
-            const cap = segCaps.get(arm.segIndex);
-            if (arm.isStart) { cap.startLeft = leftPt; cap.startRight = rightPt; }
-            else { cap.endLeft = rightPt; cap.endRight = leftPt; }
+            // Apply cap to all segments that end at this position
+            armList.forEach(arm => {
+                const cap = segCaps.get(arm.segIndex);
+                if (arm.isStart) { cap.startLeft = leftPt; cap.startRight = rightPt; }
+                else { cap.endLeft = rightPt; cap.endRight = leftPt; }
+            });
             return;
         }
 
@@ -253,4 +313,19 @@ function generateCSGModel(sketch, extrusionHeight, hallwayWidth, miterLimit = 4)
 function generateOBJFromSketch(sketch, extrusionHeight, hallwayWidth, miterLimit = 4) {
     const csgModel = generateCSGModel(sketch, extrusionHeight, hallwayWidth, miterLimit);
     return csgToOBJ(csgModel);
+}
+
+// Export functions for Node.js testing while maintaining browser compatibility
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+        groupVerticesByPosition,
+        buildJunctionArms,
+        generateCSGModel,
+        generateOBJFromSketch,
+        computeBoundingBoxWithMargin,
+        createCSGCube,
+        createBaseCube,
+        createExtrudedPrism,
+        createPolygonPrism
+    };
 }
