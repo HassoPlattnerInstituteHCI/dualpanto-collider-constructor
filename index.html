@@ -14,72 +14,8 @@
     <script src="app.js"></script>
 </head>
 <body>
-    <div class="container">
-        <h1>DualPanto Constructor</h1>
-        <p class="subtitle">Draw rooms and hallways, and export the layout as a single .obj model</p>
-        
-        
-        <div class="save-load-controls">
-            <div class="sketch-dropdown-group">
-                <select id="sketchDropdown" class="sketch-dropdown">
-                    <option value="" disabled selected>Load Sketch...</option>
-                </select>
-            </div>
-            <div class="sketch-button-group">
-                <button id="newSketchBtn">New Sketch</button>
-                <button id="saveBtn">Save Sketch</button>
-                <button id="downloadSketchBtn">Download JSON</button>
-                <button id="loadFromFileBtn" class="secondary">Load from File...</button>
-            </div>
-        </div>
-
-        <div class="controls">
-            <div class="tool-selector">
-                <button class="tool-btn active" data-tool="line" title="Line Tool (L)">Line</button>
-                <button class="tool-btn" data-tool="polygon" title="Polygon Tool (P)">Polygon</button>
-                <button class="tool-btn" data-tool="move" title="Move Vertex (M)">Move</button>
-                <button class="tool-btn" data-tool="delete" title="Delete Tool (D)">Delete</button>
-                <button id="undoBtn" title="Undo (Ctrl+Z)" disabled>Undo</button>
-                <button id="redoBtn" title="Redo (Ctrl+Y)" disabled>Redo</button>
-            </div>
-            <div class="button-group">
-                <button id="resetViewBtn">Reset View</button>
-                <button id="downloadBtn">Download OBJ</button>
-                <button id="clearBtn">Clear Sketch</button>
-            </div>
-        </div>
-        
-        <!-- Unsaved Changes Confirmation Modal -->
-        <div id="unsavedModal" class="modal-overlay" hidden>
-            <div class="modal">
-                <h3>Unsaved Changes</h3>
-                <p>You have unsaved changes. What would you like to do?</p>
-                <div class="modal-buttons">
-                    <button id="unsavedSaveBtn" class="btn-primary">Save Current</button>
-                    <button id="unsavedDiscardBtn" class="btn-secondary">Discard</button>
-                    <button id="unsavedCancelBtn" class="btn-cancel">Cancel</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Save Modal -->
-        <div id="saveModal" class="modal-overlay" hidden>
-            <div class="modal">
-                <h3>Save Sketch</h3>
-                <input type="text" id="sketchNameInput" class="modal-input" placeholder="Enter sketch name">
-                <div class="modal-buttons">
-                    <button id="saveConfirmBtn" class="btn-primary">Save</button>
-                    <button id="saveCancelBtn" class="btn-secondary">Cancel</button>
-                </div>
-            </div>
-        </div>
-        
-        <!-- File Import (hidden) -->
-        <input type="file" id="fileImportInput" accept=".json" hidden>
-        
-        <div class="canvas-container">
-            <canvas id="sketchCanvas"></canvas>
-            <svg id="emberAreaOverlay" class="overlay-svg" xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 597.4 597.4">
+    <canvas id="sketchCanvas"></canvas>
+    <svg id="emberAreaOverlay" class="overlay-svg" xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 597.4 597.4" preserveAspectRatio="xMidYMid meet">
   <defs>
     <style>
       .st0 { fill: #c9cbcc; opacity: .2; }
@@ -87,7 +23,6 @@
     </style>
   </defs>
   <path class="st0" d="M293.1,308.5c-26.7,42.7-78.1,77.2-140.8,69.2,8.3,54.7,35.2,102.9,79.6,146.7,44.4,43.7,105.8,67.9,177.1,60.8,20.3-2,45.6,1.5,76.4-52.7,30.9-54.2,32.3-109,30.6-129.7-108.9,58.8-201.7-29.4-215.6-92.3"/>
-  <path class="st0" d="M304.3,308.5c26.7,42.7,78.1,77.2,140.8,69.2-8.3,54.7-35.2,102.9-79.6,146.7-44.4,43.7-105.8,67.9-177.1,60.8-20.3-2-45.6,1.5-76.4-52.7-30.9-54.2-32.3-109-30.6-129.7,108.9,58.8,201.7-29.4,215.6-92.3"/>
   <g>
     <path class="st1" d="M278.1,556.4"/>
     <path class="st1" d="M296.9,310.7c-10.3,45.7-62,104.7-131.3,110.9"/>
@@ -98,15 +33,73 @@
   <path class="st1" d="M293.1,308.5c-26.7,42.7-78.1,77.2-140.8,69.2,8.3,54.7,35.2,102.9,79.6,146.7,44.4,43.7,105.8,67.9,177.1,60.8,20.3-2,45.6,1.5,76.4-52.7,30.9-54.2,32.3-109,30.6-129.7-108.9,58.8-201.7-29.4-215.6-92.3"/>
   <circle cx="298.7" cy="298.7" r="6"/>
 </svg>
+
+    <!-- Floating UI bars -->
+    <div class="save-load-controls">
+        <h1>DualPanto Constructor</h1>
+        <div class="sketch-dropdown-group">
+            <select id="sketchDropdown" class="sketch-dropdown">
+                <option value="" disabled selected>Load Sketch...</option>
+            </select>
         </div>
-        
-        <div class="status-bar">
-            <span id="sketchNameIndicator"></span>
-            <span id="pointCount">Points: 0</span> |
-            <span id="segmentCount">Segments: 0</span> |
-            <span id="gridSize">Grid: 1.0mm/10.0mm</span> |
-            <span id="statusMessage">Ready</span>
+        <div class="sketch-button-group">
+            <button id="newSketchBtn">New Sketch</button>
+            <button id="saveBtn">Save Sketch</button>
+            <button id="downloadSketchBtn">Download JSON</button>
+            <button id="loadFromFileBtn" class="secondary">Load from File...</button>
         </div>
     </div>
+
+    <div class="controls">
+        <div class="tool-selector">
+            <button class="tool-btn active" data-tool="line" title="Line Tool (L)">Line</button>
+            <button class="tool-btn" data-tool="polygon" title="Polygon Tool (P)">Polygon</button>
+            <button class="tool-btn" data-tool="move" title="Move Vertex (M)">Move</button>
+            <button class="tool-btn" data-tool="delete" title="Delete Tool (D)">Delete</button>
+            <button id="undoBtn" title="Undo (Ctrl+Z)" disabled>Undo</button>
+            <button id="redoBtn" title="Redo (Ctrl+Y)" disabled>Redo</button>
+        </div>
+        <div class="button-group">
+            <button id="resetViewBtn">Reset View</button>
+            <button id="downloadBtn">Download OBJ</button>
+            <button id="clearBtn">Clear Sketch</button>
+        </div>
+    </div>
+
+    <div class="status-bar">
+        <span id="sketchNameIndicator"></span>
+        <span id="pointCount">Points: 0</span> |
+        <span id="segmentCount">Segments: 0</span> |
+        <span id="gridSize">Grid: 1.0mm/10.0mm</span> |
+        <span id="statusMessage">Ready</span>
+    </div>
+
+    <!-- Unsaved Changes Confirmation Modal -->
+    <div id="unsavedModal" class="modal-overlay" hidden>
+        <div class="modal">
+            <h3>Unsaved Changes</h3>
+            <p>You have unsaved changes. What would you like to do?</p>
+            <div class="modal-buttons">
+                <button id="unsavedSaveBtn" class="btn-primary">Save Current</button>
+                <button id="unsavedDiscardBtn" class="btn-secondary">Discard</button>
+                <button id="unsavedCancelBtn" class="btn-cancel">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Save Modal -->
+    <div id="saveModal" class="modal-overlay" hidden>
+        <div class="modal">
+            <h3>Save Sketch</h3>
+            <input type="text" id="sketchNameInput" class="modal-input" placeholder="Enter sketch name">
+            <div class="modal-buttons">
+                <button id="saveConfirmBtn" class="btn-primary">Save</button>
+                <button id="saveCancelBtn" class="btn-secondary">Cancel</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- File Import (hidden) -->
+    <input type="file" id="fileImportInput" accept=".json" hidden>
 </body>
 </html>

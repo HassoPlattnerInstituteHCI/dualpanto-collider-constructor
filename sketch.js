@@ -1462,9 +1462,10 @@ function initSketchCanvas() {
     console.log('Canvas initialized:', canvas.width, 'x', canvas.height);
     
     function resizeCanvas() {
-        const container = canvas.parentElement;
-        canvas.width = container.clientWidth;
-        canvas.height = 600;
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        canvas.style.width = window.innerWidth + 'px';
+        canvas.style.height = window.innerHeight + 'px';
         drawCanvas();
     }
     
