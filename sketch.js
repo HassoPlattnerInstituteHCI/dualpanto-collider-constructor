@@ -838,6 +838,7 @@ function handleVertexMoveInput(type, mm) {
             if (window.moveVertexBeforeState) {
                 recordSimpleAction(window.moveVertexBeforeState);
                 window.moveVertexBeforeState = null;
+                updateStatus();
             }
             
             isMovingVertex = false;
@@ -912,6 +913,7 @@ function clearSketch() {
     // Record the action for undo
     if (beforeState) {
         recordSimpleAction(beforeState);
+        updateStatus();
     }
 }
 
@@ -1243,6 +1245,7 @@ function handleCanvasInput(type, mouseX, mouseY) {
                 polygonDeletionCandidates = [];
                 deletionCandidates = [];
                 drawCanvas();
+                updateStatus();
             } else if (deletionCandidates.length > 0) {
                 // Save state before the action for undo
                 const beforeState = saveStateForUndo();
@@ -1253,6 +1256,7 @@ function handleCanvasInput(type, mouseX, mouseY) {
                 
                 deletionCandidates = [];
                 drawCanvas();
+                updateStatus();
             }
         }
         return;  // Don't handle drawing in deletion mode
@@ -1273,6 +1277,9 @@ function handleCanvasInput(type, mouseX, mouseY) {
     // Line drawing logic
     if (type === 'down') {
         if (!isDrawing) {
+            // Save state before adding the first point for undo
+            const beforeState = saveStateForUndo();
+            
             // ALWAYS create a new point, even when snapping to existing ones
             // This allows independent vertex movement in the move tool
             const newIndex = sketch.points.length;
@@ -1281,6 +1288,10 @@ function handleCanvasInput(type, mouseX, mouseY) {
             isDrawing = true;
             previewPoint = null;
             newPointAdded = true;
+            
+            // Store beforeState for potential undo
+            window.lineDrawBeforeState = beforeState;
+            
             drawCanvas();
         }
     } else if (type === 'move') {
@@ -1290,9 +1301,6 @@ function handleCanvasInput(type, mouseX, mouseY) {
         }
     } else if (type === 'up') {
         if (isDrawing) {
-            // Save state before the action for undo
-            const beforeState = saveStateForUndo();
-            
             isDrawing = false;
             
             let segmentCreated = false;
@@ -1322,8 +1330,12 @@ function handleCanvasInput(type, mouseX, mouseY) {
                         });
                         segmentCreated = true;
                         
-                        // Record the action for undo
-                        recordSimpleAction(beforeState);
+                        // Record the action for undo (using the state saved before first point was added)
+                        if (window.lineDrawBeforeState) {
+                            recordSimpleAction(window.lineDrawBeforeState);
+                            window.lineDrawBeforeState = null;
+                            updateStatus();
+                        }
                     } else {
                         // Remove the end point that was added but not used
                         sketch.points.pop();
@@ -1334,6 +1346,8 @@ function handleCanvasInput(type, mouseX, mouseY) {
             // If a new point was added but no segment was created, remove the orphaned point
             if (newPointAdded && !segmentCreated) {
                 sketch.points.pop();
+                // Clear the stored beforeState since we didn't create a segment
+                window.lineDrawBeforeState = null;
             }
             
             // Clean up any zero-length segments and orphaned points
@@ -1681,6 +1695,15 @@ function restoreState(state) {
     sketch.points = state.points.map(p => ({ x: p.x, y: p.y }));
     sketch.segments = state.segments.map(seg => ({ start: seg.start, end: seg.end }));
     sketch.polygons = state.polygons.map(poly => ({ vertices: poly.vertices.slice() }));
+    
+    // Clear move vertex candidates to prevent stale highlights
+    moveVertexCandidates = [];
+    moveClosestEdge = null;
+    moveClosestEdges = [];
+    
+    // Clear deletion candidates to prevent stale highlights
+    deletionCandidates = [];
+    polygonDeletionCandidates = [];
 }
 
 /**
