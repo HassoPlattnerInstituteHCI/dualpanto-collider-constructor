@@ -18,7 +18,8 @@ const ZOOM_FACTOR = 1.03; // Zoom multiplier per wheel tick
 const SNAP_RADIUS = 5;   // pixels - radius for snapping to existing points
 
 // Grid granularity (user adjustable)
-let gridGranularity = 0.1; // 1.0 = default, 0.1-2.0 range
+// Grid granularity - central setting that can be easily adjusted
+let gridGranularity = 0.2; // 0.1-2.0 range, 0.2 is the preferred default
 
 // Viewport state
 const viewport = {
@@ -32,7 +33,7 @@ const viewport = {
 // Panning state
 let isPanning = false;
 let panStart = { x: 0, y: 0 };
-let spaceKeyPressed = false;
+let commandKeyPressed = false;
 
 // Deletion state
 let isDeleting = false;           // Toggle state for delete mode
@@ -915,6 +916,11 @@ function clearSketch() {
         recordSimpleAction(beforeState);
         updateStatus();
     }
+    
+    // Mark as dirty for save/load system
+    if (typeof markSketchDirty === 'function') {
+        markSketchDirty();
+    }
 }
 
 function computeBoundingBox() {
@@ -1466,10 +1472,10 @@ function initSketchCanvas() {
     window.addEventListener('resize', resizeCanvas);
     
     // Mouse event listeners
-    // Track spacebar state for panning
+    // Track command key state for panning
     window.addEventListener('keydown', (e) => {
-        if (e.code === 'Space') {
-            spaceKeyPressed = true;
+        if (e.code === 'MetaLeft' || e.code === 'MetaRight') {
+            commandKeyPressed = true;
             e.preventDefault();
         }
         // Track Option/Alt key for deletion mode
@@ -1526,8 +1532,8 @@ function initSketchCanvas() {
     });
     
     window.addEventListener('keyup', (e) => {
-        if (e.code === 'Space') {
-            spaceKeyPressed = false;
+        if (e.code === 'MetaLeft' || e.code === 'MetaRight') {
+            commandKeyPressed = false;
             e.preventDefault();
         }
         // Track Option/Alt key release
@@ -1544,9 +1550,9 @@ function initSketchCanvas() {
         const mouseX = e.clientX - rect.left;
         const mouseY = e.clientY - rect.top;
         
-        // Check if this is a pan gesture (middle mouse button or Space + left click)
+        // Check if this is a pan gesture (middle mouse button or Command + left click)
         // But don't pan if we're in move tool and about to drag vertices
-        if ((e.button === 1 || (e.button === 0 && spaceKeyPressed)) && currentTool !== 'move') {
+        if ((e.button === 1 || (e.button === 0 && commandKeyPressed)) && currentTool !== 'move') {
             isPanning = true;
             panStart = { x: mouseX, y: mouseY };
             e.preventDefault();
@@ -1732,6 +1738,11 @@ function recordSimpleAction(beforeState) {
     
     const afterState = saveStateForUndo();
     recordAction(beforeState, afterState);
+    
+    // Mark sketch as dirty (for save/load system)
+    if (typeof markSketchDirty === 'function') {
+        markSketchDirty();
+    }
 }
 
 /**
@@ -1794,4 +1805,94 @@ function canUndo() {
  */
 function canRedo() {
     return redoStack.length > 0;
+}
+
+// ============================================
+// SKETCH EXPORT/IMPORT FUNCTIONS
+// ============================================
+
+/**
+ * Export current sketch state as a plain object for serialization
+ * Returns {points, segments, polygons} with plain arrays/objects
+ */
+function exportSketchState() {
+    return {
+        points: sketch.points.map(p => ({ x: p.x, y: p.y })),
+        segments: sketch.segments.map(seg => ({ start: seg.start, end: seg.end })),
+        polygons: sketch.polygons.map(poly => ({ vertices: poly.vertices.slice() }))
+    };
+}
+
+/**
+ * Import sketch state from a plain object
+ * Restores points, segments, polygons and clears undo/redo stacks
+ */
+function importSketchState(state) {
+    if (!state) return;
+    
+    sketch.points = state.points ? state.points.map(p => ({ x: p.x, y: p.y })) : [];
+    sketch.segments = state.segments ? state.segments.map(seg => ({ start: seg.start, end: seg.end })) : [];
+    sketch.polygons = state.polygons ? state.polygons.map(poly => ({ vertices: poly.vertices.slice() })) : [];
+    
+    // Clear all drawing states
+    isDrawing = false;
+    previewPoint = null;
+    startPointIndex = null;
+    newPointAdded = false;
+    isDrawingPolygon = false;
+    polygonVertices = [];
+    polygonStartIndex = null;
+    polygonAddedPoints = [];
+    
+    // Clear selection states
+    moveVertexCandidates = [];
+    moveClosestEdge = null;
+    moveClosestEdges = [];
+    deletionCandidates = [];
+    polygonDeletionCandidates = [];
+    
+    // Clear undo/redo stacks
+    clearUndoRedoStacks();
+    
+    drawCanvas();
+    updateStatus();
+}
+
+/**
+ * Compare two sketch states for equality
+ * Returns true if states are identical, false otherwise
+ */
+function compareSketchStates(a, b) {
+    if (!a && !b) return true;
+    if (!a || !b) return false;
+    
+    // Compare points
+    if (a.points.length !== b.points.length) return false;
+    for (let i = 0; i < a.points.length; i++) {
+        if (a.points[i].x !== b.points[i].x || a.points[i].y !== b.points[i].y) {
+            return false;
+        }
+    }
+    
+    // Compare segments
+    if (a.segments.length !== b.segments.length) return false;
+    for (let i = 0; i < a.segments.length; i++) {
+        if (a.segments[i].start !== b.segments[i].start || 
+            a.segments[i].end !== b.segments[i].end) {
+            return false;
+        }
+    }
+    
+    // Compare polygons
+    if (a.polygons.length !== b.polygons.length) return false;
+    for (let i = 0; i < a.polygons.length; i++) {
+        if (a.polygons[i].vertices.length !== b.polygons[i].vertices.length) return false;
+        for (let j = 0; j < a.polygons[i].vertices.length; j++) {
+            if (a.polygons[i].vertices[j] !== b.polygons[i].vertices[j]) {
+                return false;
+            }
+        }
+    }
+    
+    return true;
 }

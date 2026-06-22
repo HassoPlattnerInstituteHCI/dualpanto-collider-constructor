@@ -15,42 +15,67 @@
 </head>
 <body>
     <div class="container">
-        <h1>Maze Extrusion Tool</h1>
-        <p class="subtitle">Draw 2D hallways and polygons, extrude with cutouts, export as OBJ</p>
+        <h1>DualPanto Constructor</h1>
+        <p class="subtitle">Draw rooms and hallways, and export the layout as a single .obj model</p>
         
-        <div class="tool-selector">
-            <button class="tool-btn active" data-tool="line" title="Line Tool (L)">Line</button>
-            <button class="tool-btn" data-tool="polygon" title="Polygon Tool (P)">Polygon</button>
-            <button class="tool-btn" data-tool="move" title="Move Vertex (M)">Move</button>
-            <button class="tool-btn" data-tool="delete" title="Delete Tool (D)">Delete</button>
-            <button id="undoBtn" title="Undo (Ctrl+Z)" disabled>Undo</button>
-            <button id="redoBtn" title="Redo (Ctrl+Y)" disabled>Redo</button>
+        
+        <div class="save-load-controls">
+            <div class="sketch-dropdown-group">
+                <select id="sketchDropdown" class="sketch-dropdown">
+                    <option value="" disabled selected>Load Sketch...</option>
+                </select>
+            </div>
+            <div class="sketch-button-group">
+                <button id="newSketchBtn">New Sketch</button>
+                <button id="saveBtn">Save Sketch</button>
+                <button id="downloadSketchBtn">Download JSON</button>
+                <button id="loadFromFileBtn" class="secondary">Load from File...</button>
+            </div>
         </div>
-        
+
         <div class="controls">
-            <div class="control-group">
-                <label for="extrusionHeight">Extrusion Height (mm):</label>
-                <input type="number" id="extrusionHeight" value="10" min="0.1" step="0.1">
-            </div>
-            <div class="control-group">
-                <label for="hallwayWidth">Hallway Width (mm):</label>
-                <input type="number" id="hallwayWidth" value="5" min="0.1" step="0.1">
-            </div>
-            <div class="control-group">
-                <label for="gridGranularity">Grid Granularity:</label>
-                <div class="slider-container">
-                    <input type="range" id="gridGranularity" min="0.1" max="2" step="0.1" value="1">
-                    <span id="granularityValue">1.0</span>
-                </div>
+            <div class="tool-selector">
+                <button class="tool-btn active" data-tool="line" title="Line Tool (L)">Line</button>
+                <button class="tool-btn" data-tool="polygon" title="Polygon Tool (P)">Polygon</button>
+                <button class="tool-btn" data-tool="move" title="Move Vertex (M)">Move</button>
+                <button class="tool-btn" data-tool="delete" title="Delete Tool (D)">Delete</button>
+                <button id="undoBtn" title="Undo (Ctrl+Z)" disabled>Undo</button>
+                <button id="redoBtn" title="Redo (Ctrl+Y)" disabled>Redo</button>
             </div>
             <div class="button-group">
                 <button id="resetViewBtn">Reset View</button>
-                <button id="deleteBtn">Delete Mode</button>
-                <button id="extrudeBtn">Generate 3D Model</button>
-                <button id="downloadBtn" disabled>Download OBJ</button>
+                <button id="downloadBtn">Download OBJ</button>
                 <button id="clearBtn">Clear Sketch</button>
             </div>
         </div>
+        
+        <!-- Unsaved Changes Confirmation Modal -->
+        <div id="unsavedModal" class="modal-overlay" hidden>
+            <div class="modal">
+                <h3>Unsaved Changes</h3>
+                <p>You have unsaved changes. What would you like to do?</p>
+                <div class="modal-buttons">
+                    <button id="unsavedSaveBtn" class="btn-primary">Save Current</button>
+                    <button id="unsavedDiscardBtn" class="btn-secondary">Discard</button>
+                    <button id="unsavedCancelBtn" class="btn-cancel">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Save Modal -->
+        <div id="saveModal" class="modal-overlay" hidden>
+            <div class="modal">
+                <h3>Save Sketch</h3>
+                <input type="text" id="sketchNameInput" class="modal-input" placeholder="Enter sketch name">
+                <div class="modal-buttons">
+                    <button id="saveConfirmBtn" class="btn-primary">Save</button>
+                    <button id="saveCancelBtn" class="btn-secondary">Cancel</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- File Import (hidden) -->
+        <input type="file" id="fileImportInput" accept=".json" hidden>
         
         <div class="canvas-container">
             <canvas id="sketchCanvas"></canvas>
@@ -76,6 +101,7 @@
         </div>
         
         <div class="status-bar">
+            <span id="sketchNameIndicator"></span>
             <span id="pointCount">Points: 0</span> |
             <span id="segmentCount">Segments: 0</span> |
             <span id="gridSize">Grid: 1.0mm/10.0mm</span> |
