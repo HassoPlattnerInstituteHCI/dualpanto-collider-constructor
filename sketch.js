@@ -339,11 +339,14 @@ function deleteSegments(segmentIndices) {
     // Remove segments
     sketch.segments = sketch.segments.filter((_, idx) => !indicesToDelete.has(idx));
     
-    // Find points that are still referenced by remaining segments
+    // Find points that are still referenced by remaining segments OR polygons
     const usedPointIndices = new Set();
     sketch.segments.forEach(seg => {
         usedPointIndices.add(seg.start);
         usedPointIndices.add(seg.end);
+    });
+    sketch.polygons.forEach(poly => {
+        poly.vertices.forEach(vIdx => usedPointIndices.add(vIdx));
     });
     
     // Build new points array and create mapping from old index to new index
@@ -365,6 +368,11 @@ function deleteSegments(segmentIndices) {
     sketch.segments.forEach(seg => {
         seg.start = pointMap.get(seg.start);
         seg.end = pointMap.get(seg.end);
+    });
+    
+    // Remap polygon vertex indices to new point indices
+    sketch.polygons.forEach(poly => {
+        poly.vertices = poly.vertices.map(vIdx => pointMap.get(vIdx));
     });
     
     updateStatus();
