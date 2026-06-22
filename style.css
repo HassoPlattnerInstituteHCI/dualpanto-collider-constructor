@@ -237,6 +237,27 @@ h1 {
     transition: all 0.2s;
 }
 
+/* Button icons */
+button svg {
+    margin-right: 8px;
+    vertical-align: middle;
+    fill: currentColor;
+}
+
+/* Undo/Redo buttons - square with centered icon */
+#undoBtn, #redoBtn {
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+#undoBtn svg, #redoBtn svg {
+    margin-right: 0;
+}
+
 /* Toolbar action buttons */
 #resetViewBtn {
     background: #6c757d;
