@@ -64,6 +64,14 @@ let moveClosestEdge = null;     // Edge info for highlighting the closest edge (
 let moveClosestEdges = [];      // Array of all edges at minimum distance for highlighting
 
 // ============================================
+// UNDO/REDO STATE
+// ============================================
+let undoStack = [];              // Stack of commands for undo
+let redoStack = [];              // Stack of commands for redo
+let undoLimit = 100;            // Maximum number of undo steps
+let isUndoing = false;          // Flag to prevent recording commands during undo/redo
+
+// ============================================
 // COORDINATE TRANSFORMATIONS
 // ============================================
 
@@ -796,6 +804,9 @@ function handleVertexMoveInput(type, mm) {
     } else if (type === 'down') {
         // Start dragging if there are candidates
         if (moveVertexCandidates.length > 0) {
+            // Save state before the drag for undo
+            const beforeState = saveStateForUndo();
+            
             isMovingVertex = true;
             // Snap the drag start position to grid so vertices land on grid
             const snappedStart = snapToGrid(mm.x, mm.y);
@@ -809,9 +820,18 @@ function handleVertexMoveInput(type, mm) {
                     y: sketch.points[idx].y
                 });
             });
+            
+            // Store before state for undo
+            window.moveVertexBeforeState = beforeState;
         }
     } else if (type === 'up') {
         if (isMovingVertex) {
+            // Use the stored before state from when the drag started
+            if (window.moveVertexBeforeState) {
+                recordSimpleAction(window.moveVertexBeforeState);
+                window.moveVertexBeforeState = null;
+            }
+            
             isMovingVertex = false;
             dragStartMM = null;
             dragOriginalPositions = null;
@@ -864,6 +884,9 @@ function snapToExistingPoint(mmX, mmY) {
 // ============================================
 
 function clearSketch() {
+    // Save state before clearing for undo
+    const beforeState = saveStateForUndo();
+    
     sketch.points = [];
     sketch.segments = [];
     sketch.polygons = [];
@@ -877,6 +900,11 @@ function clearSketch() {
     polygonAddedPoints = [];
     polygonDeletionCandidates = [];
     deletionCandidates = [];
+    
+    // Record the action for undo
+    if (beforeState) {
+        recordSimpleAction(beforeState);
+    }
 }
 
 function computeBoundingBox() {
@@ -1197,12 +1225,24 @@ function handleCanvasInput(type, mouseX, mouseY) {
         } else if (type === 'up') {
             // Delete the candidates on click release
             if (polygonDeletionCandidates.length > 0) {
+                // Save state before the action for undo
+                const beforeState = saveStateForUndo();
                 deletePolygons(polygonDeletionCandidates);
+                
+                // Record the action for undo
+                recordSimpleAction(beforeState);
+                
                 polygonDeletionCandidates = [];
                 deletionCandidates = [];
                 drawCanvas();
             } else if (deletionCandidates.length > 0) {
+                // Save state before the action for undo
+                const beforeState = saveStateForUndo();
                 deleteSegments(deletionCandidates);
+                
+                // Record the action for undo
+                recordSimpleAction(beforeState);
+                
                 deletionCandidates = [];
                 drawCanvas();
             }
@@ -1242,6 +1282,9 @@ function handleCanvasInput(type, mouseX, mouseY) {
         }
     } else if (type === 'up') {
         if (isDrawing) {
+            // Save state before the action for undo
+            const beforeState = saveStateForUndo();
+            
             isDrawing = false;
             
             let segmentCreated = false;
@@ -1270,6 +1313,9 @@ function handleCanvasInput(type, mouseX, mouseY) {
                             end: endPointIndex
                         });
                         segmentCreated = true;
+                        
+                        // Record the action for undo
+                        recordSimpleAction(beforeState);
                     } else {
                         // Remove the end point that was added but not used
                         sketch.points.pop();
@@ -1330,10 +1376,16 @@ function handlePolygonInput(type, snappedMM) {
                     snappedMM.y - firstVertex.y
                 );
                 if (distToFirst < SNAP_RADIUS / viewport.scale) {
+                    // Save state before the action for undo
+                    const beforeState = saveStateForUndo();
+                    
                     // Close the polygon - add to polygons array
                     sketch.polygons.push({
                         vertices: [...polygonVertices]
                     });
+                    
+                    // Record the action for undo
+                    recordSimpleAction(beforeState);
                     
                     // Reset polygon drawing state
                     isDrawingPolygon = false;
@@ -1404,6 +1456,17 @@ function initSketchCanvas() {
             e.preventDefault();
         }
         
+        // Undo/Redo keyboard shortcuts
+        if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
+            if (e.key === 'z' || e.key === 'Z') {
+                undo();
+                e.preventDefault();
+            } else if (e.key === 'y' || e.key === 'Y') {
+                redo();
+                e.preventDefault();
+            }
+        }
+        
         // Polygon tool keyboard shortcuts
         if (currentTool === 'polygon') {
             if (e.code === 'Escape') {
@@ -1418,10 +1481,17 @@ function initSketchCanvas() {
                 }
                 e.preventDefault();
             } else if (e.code === 'Enter' && isDrawingPolygon && polygonVertices.length >= 3) {
+                // Save state before the action for undo
+                const beforeState = saveStateForUndo();
+                
                 // Auto-close polygon by connecting last vertex to first
                 sketch.polygons.push({
                     vertices: [...polygonVertices]
                 });
+                
+                // Record the action for undo
+                recordSimpleAction(beforeState);
+                
                 isDrawingPolygon = false;
                 polygonVertices = [];
                 polygonStartIndex = null;
@@ -1576,4 +1646,121 @@ function initSketchCanvas() {
     cleanupZeroLengthSegments();
     
     drawCanvas();
+}
+
+// ============================================
+// UNDO/REDO SYSTEM (STATE-BASED APPROACH)
+// ============================================
+
+/**
+ * Save current sketch state for undo
+ * Uses a state-based approach: each action saves the complete state before the action
+ */
+function saveStateForUndo() {
+    if (isUndoing) return null;
+    
+    return {
+        points: sketch.points.map(p => ({ x: p.x, y: p.y })),
+        segments: sketch.segments.map(seg => ({ start: seg.start, end: seg.end })),
+        polygons: sketch.polygons.map(poly => ({ vertices: poly.vertices.slice() }))
+    };
+}
+
+/**
+ * Restore sketch state from saved state
+ */
+function restoreState(state) {
+    sketch.points = state.points.map(p => ({ x: p.x, y: p.y }));
+    sketch.segments = state.segments.map(seg => ({ start: seg.start, end: seg.end }));
+    sketch.polygons = state.polygons.map(poly => ({ vertices: poly.vertices.slice() }));
+}
+
+/**
+ * Record an action with before/after states
+ */
+function recordAction(beforeState, afterState) {
+    if (isUndoing) return;
+    
+    // Push to undo stack
+    undoStack.push({ beforeState, afterState });
+    
+    // Trim undo stack if it exceeds the limit
+    if (undoStack.length > undoLimit) {
+        undoStack.shift();
+    }
+    
+    // Clear redo stack when a new action is recorded
+    redoStack = [];
+}
+
+/**
+ * Record a simple action (only stores before state, after state is current)
+ */
+function recordSimpleAction(beforeState) {
+    if (isUndoing) return;
+    
+    const afterState = saveStateForUndo();
+    recordAction(beforeState, afterState);
+}
+
+/**
+ * Undo the last action
+ */
+function undo() {
+    if (undoStack.length === 0) return;
+    
+    isUndoing = true;
+    
+    const action = undoStack.pop();
+    restoreState(action.beforeState);
+    
+    // Push to redo stack
+    redoStack.push(action);
+    
+    isUndoing = false;
+    
+    drawCanvas();
+    updateStatus();
+}
+
+/**
+ * Redo the last undone action
+ */
+function redo() {
+    if (redoStack.length === 0) return;
+    
+    isUndoing = true;
+    
+    const action = redoStack.pop();
+    restoreState(action.afterState);
+    
+    // Push back to undo stack
+    undoStack.push(action);
+    
+    isUndoing = false;
+    
+    drawCanvas();
+    updateStatus();
+}
+
+/**
+ * Clear both undo and redo stacks
+ */
+function clearUndoRedoStacks() {
+    undoStack = [];
+    redoStack = [];
+}
+
+/**
+ * Check if undo is available
+ */
+function canUndo() {
+    return undoStack.length > 0;
+}
+
+/**
+ * Check if redo is available
+ */
+function canRedo() {
+    return redoStack.length > 0;
 }

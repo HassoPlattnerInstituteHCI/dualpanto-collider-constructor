@@ -132,6 +132,22 @@ function initControls() {
         drawCanvas();
     });
     
+    // Undo button
+    const undoBtn = document.getElementById('undoBtn');
+    if (undoBtn) {
+        undoBtn.addEventListener('click', () => {
+            undo();
+        });
+    }
+    
+    // Redo button
+    const redoBtn = document.getElementById('redoBtn');
+    if (redoBtn) {
+        redoBtn.addEventListener('click', () => {
+            redo();
+        });
+    }
+    
     // Extrude button
     document.getElementById('extrudeBtn').addEventListener('click', generate3DModel);
     
@@ -150,6 +166,9 @@ function updateStatus() {
     const stats = getSketchStats();
     document.getElementById('pointCount').textContent = `Points: ${stats.pointCount}`;
     document.getElementById('segmentCount').textContent = `Segments: ${stats.segmentCount}`;
+    
+    // Update undo/redo button states
+    updateUndoRedoButtons();
     
     const statusEl = document.getElementById('statusMessage');
     
@@ -178,6 +197,22 @@ function updateStatus() {
     } else {
         statusEl.textContent = stats.segmentCount > 0 ? 
             `${stats.segmentCount} hallway segment(s) drawn` : 'Ready';
+    }
+}
+
+// ============================================
+// UNDO/REDO UI
+// ============================================
+
+function updateUndoRedoButtons() {
+    const undoBtn = document.getElementById('undoBtn');
+    const redoBtn = document.getElementById('redoBtn');
+    
+    if (undoBtn) {
+        undoBtn.disabled = !canUndo();
+    }
+    if (redoBtn) {
+        redoBtn.disabled = !canRedo();
     }
 }
 

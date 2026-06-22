@@ -66,6 +66,30 @@ h1 {
     border-color: #00355a;
 }
 
+/* Undo/Redo buttons */
+#undoBtn, #redoBtn {
+    padding: 8px 16px;
+    border: 2px solid #ccc;
+    background: #fff;
+    border-radius: 4px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+    color: #333;
+}
+
+#undoBtn:hover:not(:disabled), #redoBtn:hover:not(:disabled) {
+    background: #f0f0f0;
+    border-color: #999;
+}
+
+#undoBtn:disabled, #redoBtn:disabled {
+    color: #999;
+    background: #f5f5f5;
+    border-color: #ddd;
+    cursor: not-allowed;
+}
+
 .controls {
     background: #fff;
     padding: 15px 20px;
