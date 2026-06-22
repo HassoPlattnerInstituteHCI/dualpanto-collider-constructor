@@ -60,6 +60,8 @@ let isMovingVertex = false;
 let moveVertexCandidates = [];  // Array of point indices to move
 let dragStartMM = null;          // Starting MM position of drag
 let dragOriginalPositions = null; // Original positions of vertices being moved
+let moveClosestEdge = null;     // Edge info for highlighting the closest edge (backwards compat)
+let moveClosestEdges = [];      // Array of all edges at minimum distance for highlighting
 
 // ============================================
 // COORDINATE TRANSFORMATIONS
@@ -571,6 +573,8 @@ function findMoveVertexCandidates(mmX, mmY) {
     });
     
     if (closeVertices.length === 0) {
+        moveClosestEdge = null;
+        moveClosestEdges = [];
         return [];
     }
     
@@ -623,12 +627,15 @@ function findMoveVertexCandidates(mmX, mmY) {
     }
     
     if (!closestGroup || closestGroup.pointIndices.length === 0) {
+        moveClosestEdge = null;
+        moveClosestEdges = [];
         return [];
     }
     
     // Step 3: From vertices in closest group, select only those whose connected edge is closest to cursor
     // For each vertex at the closest location, find its closest connected edge
     // Then select only vertices whose closest edge is the overall closest
+    // Also collect ALL edges at the minimum distance for highlighting
     
     // Build a map of vertex index -> array of edges it belongs to
     const vertexEdges = new Map();
@@ -715,13 +722,45 @@ function findMoveVertexCandidates(mmX, mmY) {
     
     if (globalClosestEdgeDist === Infinity) {
         // No edges found - return all vertices in closest group
+        moveClosestEdge = null;
         return closestGroup.pointIndices;
     }
     
-    // Return only vertices whose closest edge distance equals the global minimum
-    return closestGroup.pointIndices.filter(vIdx => 
-        vertexClosestEdgeDist.get(vIdx) === globalClosestEdgeDist
-    );
+    // Collect ALL edges at the minimum distance for highlighting
+    // and find which vertices to select
+    const closestEdges = [];
+    const selectedVertices = [];
+    
+    for (const vIdx of closestGroup.pointIndices) {
+        const dist = vertexClosestEdgeDist.get(vIdx);
+        if (dist === globalClosestEdgeDist) {
+            selectedVertices.push(vIdx);
+            // Add all edges for this vertex that are at the minimum distance
+            for (const edgeInfo of vertexEdges.get(vIdx)) {
+                const p1 = sketch.points[edgeInfo.start];
+                const p2 = sketch.points[edgeInfo.end];
+                const edgeDist = distanceToSegment(mmX, mmY, p1, p2);
+                if (Math.abs(edgeDist - globalClosestEdgeDist) < 0.001) {
+                    // Check if this edge is already in the list
+                    const edgeKey = `${edgeInfo.start},${edgeInfo.end}`;
+                    const key2 = `${edgeInfo.end},${edgeInfo.start}`; // Reverse direction
+                    const alreadyAdded = closestEdges.some(e => 
+                        `${e.start},${e.end}` === edgeKey || `${e.start},${e.end}` === key2
+                    );
+                    if (!alreadyAdded) {
+                        closestEdges.push(edgeInfo);
+                    }
+                }
+            }
+        }
+    }
+    
+    // Store all closest edges for highlighting (use first one or all)
+    moveClosestEdge = closestEdges.length > 0 ? closestEdges[0] : null;
+    // Actually, let's store all of them in a new variable
+    moveClosestEdges = closestEdges;
+    
+    return selectedVertices;
 }
 
 /**
@@ -991,6 +1030,27 @@ function drawSketch() {
             ctx.stroke();
         }
     });
+    
+    // Draw closest edge(s) in bold for move tool
+    if (currentTool === 'move' && moveClosestEdges.length > 0) {
+        ctx.strokeStyle = '#ffa500';  // Orange to match vertex highlight
+        ctx.lineWidth = 4;  // Bold line
+        
+        moveClosestEdges.forEach(edgeInfo => {
+            const p1 = sketch.points[edgeInfo.start];
+            const p2 = sketch.points[edgeInfo.end];
+            const pixel1 = mmToPixel(p1.x, p1.y);
+            const pixel2 = mmToPixel(p2.x, p2.y);
+            
+            ctx.beginPath();
+            ctx.moveTo(pixel1.x, pixel1.y);
+            ctx.lineTo(pixel2.x, pixel2.y);
+            ctx.stroke();
+        });
+        
+        // Reset line width for subsequent drawing
+        ctx.lineWidth = 2;
+    }
     
     // Draw points
     ctx.fillStyle = '#4a90e2';

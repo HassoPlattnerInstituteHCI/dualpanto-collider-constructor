@@ -68,6 +68,8 @@ function setTool(toolName) {
         moveVertexCandidates = [];
         dragStartMM = null;
         dragOriginalPositions = null;
+        moveClosestEdge = null;
+        moveClosestEdges = [];
     }
     
     // Clear deletion candidates when switching away from delete

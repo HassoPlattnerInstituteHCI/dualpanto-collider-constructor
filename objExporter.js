@@ -3,18 +3,20 @@
 /**
  * Apply -90 degree rotation around X axis AND mirror along Z axis to a vertex
  * This matches Unity's expected coordinate system
+ * Also scales from mm to Unity-compatible size (divide by 10)
  * 
  * Transformations applied:
- * 1. Mirror along Z: (x, y, z) -> (x, y, -z)
- * 2. Rotate -90° around X: (x, y, z) -> (x, z, -y)
+ * 1. Scale down: (x, y, z) -> (x/10, y/10, z/10)
+ * 2. Mirror along Z: (x, y, z) -> (x, y, -z)
+ * 3. Rotate -90° around X: (x, y, z) -> (x, z, -y)
  * 
- * Combined: (x, y, z) -> (x, -z, -y)
+ * Combined: (x, y, z) -> (-x/10, z/10, -y/10)
  */
 function transformForUnity(v) {
     return {
-        x: -v.x,
-        y: v.z,  // mirror Z then rotate
-        z: -v.y   // from rotation
+        x: -v.x / 10,
+        y: v.z / 10,  // mirror Z then rotate
+        z: -v.y / 10   // from rotation
     };
 }
 
