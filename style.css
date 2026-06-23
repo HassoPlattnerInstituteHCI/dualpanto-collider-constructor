@@ -36,8 +36,8 @@ body {
     z-index: 5;
 }
 
-/* Floating UI bars */
-.save-load-controls {
+/* Top bar */
+.top-bar {
     position: fixed;
     top: 20px;
     left: 20px;
@@ -53,20 +53,77 @@ body {
     align-items: center;
 }
 
-.controls {
+.sketch-dropdown-group {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    margin: 0;
+}
+
+.sketch-button-group {
+    display: flex;
+    gap: 10px;
+}
+
+.action-buttons {
+    display: flex;
+    gap: 10px;
+    margin-left: auto;
+    margin-right: 0;
+}
+
+/* Vertical toolbar on the left */
+.vertical-toolbar {
     position: fixed;
-    top: 110px;
     left: 20px;
-    right: 20px;
-    z-index: 10;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 60px;
+    z-index: 11;
     background: #fff;
-    padding: 15px 20px;
+    padding: 15px 10px;
     border-radius: 8px;
     box-shadow: 0 2px 10px rgba(0,0,0,0.1);
     display: flex;
-    flex-wrap: wrap;
-    gap: 15px;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.vertical-toolbar .tool-btn {
+    padding: 12px 8px;
+    width: 40px;
+    height: 40px;
+    display: flex;
     align-items: center;
+    justify-content: center;
+    border: 2px solid #ccc;
+    background: #fff;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s;
+    color: #333;
+}
+
+.vertical-toolbar .tool-btn:hover {
+    background: #f0f0f0;
+    border-color: #999;
+}
+
+.vertical-toolbar .tool-btn.active {
+    background: #004880;
+    color: white;
+    border-color: #004880;
+}
+
+.vertical-toolbar .tool-btn.active:hover {
+    background: #00355a;
+    border-color: #00355a;
+}
+
+.vertical-toolbar .tool-btn svg {
+    margin-right: 0;
+    width: 24px;
+    height: 24px;
 }
 
 .save-load-controls h1 {
@@ -142,13 +199,17 @@ h1 {
     border-color: #00355a;
 }
 
-/* Undo/Redo buttons */
+/* Undo/Redo buttons - now in action-buttons */
 #undoBtn, #redoBtn {
-    padding: 8px 16px;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     border: 2px solid #ccc;
     background: #fff;
     border-radius: 4px;
-    font-size: 13px;
     cursor: pointer;
     transition: all 0.2s;
     color: #333;
@@ -166,75 +227,27 @@ h1 {
     cursor: not-allowed;
 }
 
-.controls {
-    background: #fff;
-    padding: 15px 20px;
-    border-radius: 8px;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-    margin-bottom: 20px;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 15px;
-    align-items: center;
+#undoBtn svg, #redoBtn svg {
+    margin-right: 0;
+    width: 24px;
+    height: 24px;
 }
 
-.control-group {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-}
-
-.control-group label {
-    font-size: 13px;
-    font-weight: 500;
-    color: #555;
-}
-
-.control-group input[type="number"] {
-    padding: 8px 12px;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    font-size: 14px;
-    width: 120px;
-}
-
-.control-group input[type="range"] {
-    width: 120px;
-    margin-top: 4px;
-}
-
-.slider-container {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.slider-container span {
-    min-width: 30px;
-    text-align: center;
-    font-size: 13px;
-    color: #555;
-}
-
-.control-group input:focus {
-    outline: none;
-    border-color: #4a90e2;
-    box-shadow: 0 0 0 2px rgba(74, 144, 226, 0.2);
-}
-
-.button-group {
-    display: flex;
-    gap: 10px;
-    margin-left: auto;
-}
-
-.button-group button {
+/* Action buttons styling */
+.action-buttons button {
     padding: 8px 16px;
     border: none;
     border-radius: 4px;
     font-size: 13px;
     cursor: pointer;
     transition: all 0.2s;
+}
+
+/* Button icons */
+button svg {
+    margin-right: 8px;
+    vertical-align: middle;
+    fill: currentColor;
 }
 
 /* Button icons */
@@ -291,19 +304,6 @@ button svg {
     background: #c82333;
 }
 
-.button-group button:nth-child(4):hover:not(:disabled) {
-    background: #dc3545;
-}
-
-.button-group button:nth-child(5) {
-    background: #dc3545;
-    color: white;
-}
-
-.button-group button:nth-child(5):hover {
-    background: #c82333;
-}
-
 .canvas-container {
     background: #fff;
     border-radius: 8px;
@@ -348,39 +348,6 @@ button svg {
 }
 
 /* Responsive adjustments */
-@media (max-width: 768px) {
-    .controls {
-        flex-direction: column;
-        align-items: stretch;
-    }
-    
-    .button-group {
-        margin-left: 0;
-        flex-direction: column;
-    }
-    
-    .button-group button {
-        width: 100%;
-    }
-    
-    #sketchCanvas {
-        height: 400px;
-    }
-    
-    .status-bar {
-        flex-wrap: wrap;
-        text-align: center;
-    }
-    
-    .status-bar span {
-        display: block;
-        width: 100%;
-    }
-    
-    #statusMessage {
-        margin-left: 0;
-    }
-}
 
 /* Tooltip for hover on points */
 .tooltip {
@@ -393,26 +360,6 @@ button svg {
     pointer-events: none;
     z-index: 1000;
     white-space: nowrap;
-}
-
-/* Save/Load Controls */
-.save-load-controls {
-    background: #fff;
-    padding: 15px 20px;
-    border-radius: 8px;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-    margin-bottom: 20px;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 15px;
-    align-items: center;
-}
-
-.sketch-dropdown-group {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-    margin-left: auto;
 }
 
 .sketch-dropdown-group label {
@@ -429,6 +376,7 @@ button svg {
     min-width: 200px;
     background: #fff;
     cursor: pointer;
+    margin: 0;
 }
 
 .sketch-dropdown:focus {
@@ -440,6 +388,7 @@ button svg {
 .sketch-button-group {
     display: flex;
     gap: 10px;
+    margin: 0;
 }
 
 .sketch-button-group button {
@@ -582,4 +531,66 @@ button svg {
 .sketch-name-indicator.dirty::after {
     content: " (*)";
     color: #dc3545;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .top-bar {
+        left: 20px;
+        right: 20px;
+        flex-direction: column;
+        align-items: stretch;
+    }
+    
+    .vertical-toolbar {
+        top: auto;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%) translateY(0);
+        width: auto;
+        flex-direction: row;
+        padding: 10px;
+        border-radius: 20px;
+    }
+    
+    .vertical-toolbar .tool-btn {
+        width: 48px;
+        height: 48px;
+    }
+    
+    .sketch-dropdown-group {
+        margin-left: 0;
+    }
+    
+    .sketch-button-group {
+        flex-direction: column;
+    }
+    
+    .sketch-button-group button {
+        width: 100%;
+    }
+    
+    .action-buttons {
+        flex-wrap: wrap;
+        margin-left: 0;
+        justify-content: center;
+    }
+
+    #sketchCanvas {
+        height: 400px;
+    }
+    
+    .status-bar {
+        flex-wrap: wrap;
+        text-align: center;
+    }
+    
+    .status-bar span {
+        display: block;
+        width: 100%;
+    }
+    
+    #statusMessage {
+        margin-left: 0;
+    }
 }
