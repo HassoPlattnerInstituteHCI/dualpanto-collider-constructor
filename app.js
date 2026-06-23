@@ -597,6 +597,8 @@ function setTool(toolName) {
         polygonVertices = [];
         polygonStartIndex = null;
         polygonAddedPoints = [];
+        previewPoint = null;
+        window.polygonBeforeState = null; // Clean up saved state
     }
     
     // Clear move vertex state when switching away from move

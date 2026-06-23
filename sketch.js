@@ -109,7 +109,7 @@ function getAdaptiveGridSpacing() {
     if (effectiveScale >= 10) return 0.5;    // Zoomed in: 0.5mm
     if (effectiveScale >= 2) return 1;      // Default and normal zoom: 1mm (at scale >= 2)
     if (effectiveScale >= 1) return 2;      // Slightly zoomed out: 2mm
-    if (effectiveScale >= 0.5) return 3;   // Zoomed out: 5mm
+    if (effectiveScale >= 0.5) return 5;   // Zoomed out: 5mm
     if (effectiveScale >= 0.25) return 10;  // More zoomed out: 10mm
     if (effectiveScale >= 0.1) return 16;   // Far zoomed out: 20mm
     if (effectiveScale >= 0.05) return 32;  // Very far: 50mm
@@ -910,6 +910,7 @@ function clearSketch() {
     polygonAddedPoints = [];
     polygonDeletionCandidates = [];
     deletionCandidates = [];
+    window.polygonBeforeState = null; // Clean up saved state
     
     // Record the action for undo
     if (beforeState) {
@@ -1385,6 +1386,9 @@ function handlePolygonInput(type, snappedMM) {
             // Start a new polygon
             polygonAddedPoints = []; // Reset tracking for new polygon
             
+            // Save state before adding any points for this polygon
+            const polygonBeforeState = saveStateForUndo();
+            
             // ALWAYS create a new point, even when snapping to existing ones
             // This allows independent vertex movement in the move tool
             polygonStartIndex = sketch.points.length;
@@ -1392,6 +1396,11 @@ function handlePolygonInput(type, snappedMM) {
             polygonVertices = [polygonStartIndex];
             polygonAddedPoints.push(polygonStartIndex);
             isDrawingPolygon = true;
+            previewPoint = null; // Reset preview point for new polygon
+            
+            // Store the before state in a window variable for later use
+            window.polygonBeforeState = polygonBeforeState;
+            
             drawCanvas();
         } else {
             // Continuing an existing polygon
@@ -1404,8 +1413,8 @@ function handlePolygonInput(type, snappedMM) {
                     snappedMM.y - firstVertex.y
                 );
                 if (distToFirst < SNAP_RADIUS / viewport.scale) {
-                    // Save state before the action for undo
-                    const beforeState = saveStateForUndo();
+                    // Use the state saved when starting the polygon
+                    const beforeState = window.polygonBeforeState;
                     
                     // Close the polygon - add to polygons array
                     sketch.polygons.push({
@@ -1413,13 +1422,17 @@ function handlePolygonInput(type, snappedMM) {
                     });
                     
                     // Record the action for undo
-                    recordSimpleAction(beforeState);
+                    if (beforeState) {
+                        recordSimpleAction(beforeState);
+                        window.polygonBeforeState = null;
+                    }
                     
                     // Reset polygon drawing state
                     isDrawingPolygon = false;
                     polygonVertices = [];
                     polygonStartIndex = null;
                     polygonAddedPoints = [];
+                    previewPoint = null;
                     
                     drawCanvas();
                     updateStatus();
@@ -1504,14 +1517,15 @@ function initSketchCanvas() {
                     isDrawingPolygon = false;
                     polygonVertices = [];
                     polygonStartIndex = null;
+                    window.polygonBeforeState = null; // Clean up saved state
                     removePolygonOrphanedPoints();
                     drawCanvas();
                     updateStatus();
                 }
                 e.preventDefault();
             } else if (e.code === 'Enter' && isDrawingPolygon && polygonVertices.length >= 3) {
-                // Save state before the action for undo
-                const beforeState = saveStateForUndo();
+                // Use the state saved when starting the polygon
+                const beforeState = window.polygonBeforeState;
                 
                 // Auto-close polygon by connecting last vertex to first
                 sketch.polygons.push({
@@ -1519,12 +1533,16 @@ function initSketchCanvas() {
                 });
                 
                 // Record the action for undo
-                recordSimpleAction(beforeState);
+                if (beforeState) {
+                    recordSimpleAction(beforeState);
+                    window.polygonBeforeState = null;
+                }
                 
                 isDrawingPolygon = false;
                 polygonVertices = [];
                 polygonStartIndex = null;
                 polygonAddedPoints = [];
+                previewPoint = null;
                 drawCanvas();
                 updateStatus();
                 e.preventDefault();
@@ -1610,6 +1628,8 @@ function initSketchCanvas() {
             isDrawingPolygon = false;
             polygonVertices = [];
             polygonStartIndex = null;
+            previewPoint = null;
+            window.polygonBeforeState = null; // Clean up saved state
             removePolygonOrphanedPoints();
             drawCanvas();
         }
@@ -1843,6 +1863,7 @@ function importSketchState(state) {
     isDrawingPolygon = false;
     polygonVertices = [];
     polygonStartIndex = null;
+    window.polygonBeforeState = null; // Clean up saved state
     polygonAddedPoints = [];
     
     // Clear selection states
