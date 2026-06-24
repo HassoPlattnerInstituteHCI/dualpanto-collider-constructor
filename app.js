@@ -817,7 +817,7 @@ function updateUndoRedoButtons() {
 // ============================================
 
 function generate3DModel(callback) {
-    if (sketch.segments.length === 0 && (sketch.polygons || sketch.polygons.length === 0)) {
+    if (sketch.segments.length === 0 && (!sketch.polygons || sketch.polygons.length === 0)) {
         alert('Please draw at least one hallway segment or polygon.');
         return;
     }
