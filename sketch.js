@@ -493,6 +493,40 @@ function pointInPolygon(point, polyVertices) {
 }
 
 /**
+ * Check for overlapping vertices in a polygon and remove duplicates
+ * @param {Array} vertexIndices - Array of point indices for the polygon
+ * @returns {Array} - New array with duplicates removed
+ */
+function removeOverlappingPolygonVertices(vertexIndices) {
+    const threshold = getAdaptiveGridSpacing() * 0.1; // Small threshold for overlap detection
+    const uniqueVertices = [];
+    
+    for (const idx of vertexIndices) {
+        const point = sketch.points[idx];
+        let isDuplicate = false;
+        
+        // Check against all already added unique vertices
+        for (const uniqueIdx of uniqueVertices) {
+            const uniquePoint = sketch.points[uniqueIdx];
+            const dx = point.x - uniquePoint.x;
+            const dy = point.y - uniquePoint.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            
+            if (dist < threshold) {
+                isDuplicate = true;
+                break;
+            }
+        }
+        
+        if (!isDuplicate) {
+            uniqueVertices.push(idx);
+        }
+    }
+    
+    return uniqueVertices;
+}
+
+/**
  * Find polygon deletion candidates at a given position
  * @param {number} mmX - X coordinate in mm
  * @param {number} mmY - Y coordinate in mm
@@ -803,6 +837,26 @@ function handleVertexMoveInput(type, mm) {
                     y: dragOriginalPositions.get(idx).y + dy
                 };
             });
+            
+            // Check for overlapping vertices in all polygons containing moved vertices
+            const movedVertexSet = new Set(moveVertexCandidates);
+            for (let i = 0; i < sketch.polygons.length; i++) {
+                const poly = sketch.polygons[i];
+                let hasMovedVertex = false;
+                
+                // Check if this polygon has any moved vertices
+                for (const vIdx of poly.vertices) {
+                    if (movedVertexSet.has(vIdx)) {
+                        hasMovedVertex = true;
+                        break;
+                    }
+                }
+                
+                if (hasMovedVertex) {
+                    // Clean up overlapping vertices in this polygon
+                    sketch.polygons[i].vertices = removeOverlappingPolygonVertices(poly.vertices);
+                }
+            }
             
             drawCanvas();
         } else {
@@ -1416,9 +1470,10 @@ function handlePolygonInput(type, snappedMM) {
                     // Use the state saved when starting the polygon
                     const beforeState = window.polygonBeforeState;
                     
-                    // Close the polygon - add to polygons array
+                    // Close the polygon - check for overlapping vertices first
+                    const cleanedVertices = removeOverlappingPolygonVertices([...polygonVertices]);
                     sketch.polygons.push({
-                        vertices: [...polygonVertices]
+                        vertices: cleanedVertices
                     });
                     
                     // Record the action for undo
@@ -1443,8 +1498,32 @@ function handlePolygonInput(type, snappedMM) {
             // ALWAYS create a new point for polygon vertices
             const newIndex = sketch.points.length;
             sketch.points.push({ x: snappedMM.x, y: snappedMM.y });
-            polygonVertices.push(newIndex);
-            polygonAddedPoints.push(newIndex);
+            
+            // Check if this new point overlaps with any existing vertex in polygonVertices
+            const threshold = getAdaptiveGridSpacing() * 0.1;
+            let isDuplicate = false;
+            const newPoint = sketch.points[newIndex];
+            
+            for (const existingIdx of polygonVertices) {
+                const existingPoint = sketch.points[existingIdx];
+                const dx = newPoint.x - existingPoint.x;
+                const dy = newPoint.y - existingPoint.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                
+                if (dist < threshold) {
+                    isDuplicate = true;
+                    break;
+                }
+            }
+            
+            if (!isDuplicate) {
+                polygonVertices.push(newIndex);
+                polygonAddedPoints.push(newIndex);
+            } else {
+                // Remove the duplicate point we just added
+                sketch.points.pop();
+            }
+            
             drawCanvas();
         }
     } else if (type === 'move') {
@@ -1527,9 +1606,10 @@ function initSketchCanvas() {
                 // Use the state saved when starting the polygon
                 const beforeState = window.polygonBeforeState;
                 
-                // Auto-close polygon by connecting last vertex to first
+                // Auto-close polygon - check for overlapping vertices first
+                const cleanedVertices = removeOverlappingPolygonVertices([...polygonVertices]);
                 sketch.polygons.push({
-                    vertices: [...polygonVertices]
+                    vertices: cleanedVertices
                 });
                 
                 // Record the action for undo
