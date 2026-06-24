@@ -112,7 +112,8 @@ function buildJunctionArms(sketch) {
 }
 
 /**
- * Extrudes a clean 2D polygon into a 3D CSG solid
+ * Creates an extruded prism from 2D polygon vertices.
+ * Extrudes a clean 2D polygon into a 3D CSG solid with proper outward normals.
  */
 function createExtrudedPrism(points2D, zMin, zMax) {
     if (points2D.length < 3) return null;
@@ -144,14 +145,17 @@ function createExtrudedPrism(points2D, zMin, zMax) {
 }
 
 /**
- * Offset polygon vertices outwards by a given distance, keeping edges parallel
+ * Offset polygon vertices outwards by a given distance, keeping edges parallel.
  * Each edge is moved outward such that the new edge is parallel to the original
  * with a distance of offsetDistance between them.
- * 
- * This works by creating offset lines for each edge and finding their intersections.
+ * Works for both CW and CCW vertex orders.
  */
 function offsetPolygonOutwards(vertices, offsetDistance) {
     if (vertices.length < 3) return vertices.slice();
+    
+    // Determine if vertices are CW or CCW
+    const area = signedArea2D(vertices);
+    const isCCW = area > 0;
     
     const n = vertices.length;
     const offsetVerts = [];
@@ -169,18 +173,22 @@ function offsetPolygonOutwards(vertices, offsetDistance) {
         const edgeLen = Math.hypot(dx, dy);
         
         if (edgeLen < 1e-9) {
-            // Degenerate edge (zero length), just offset the point
+            // Degenerate edge, just offset the point
             offsetVerts.push({ x: v1.x + offsetDistance, y: v1.y });
             continue;
         }
         
-        const nx = dy / edgeLen;
-        const ny = -dx / edgeLen;
+        // Normal vector (90 degree rotation of edge vector)
+        // For CCW: outward normal = (dy, -dx)
+        // For CW: outward normal = (-dy, dx)
+        const sign = isCCW ? 1 : -1;
+        const nx = sign * dy / edgeLen;
+        const ny = sign * -dx / edgeLen;
         
-        const offsetPoint = { x: v1.x - nx * offsetDistance, y: v1.y - ny * offsetDistance };
+        // Point on the offset line for this edge
+        const offsetPoint = { x: v1.x + nx * offsetDistance, y: v1.y + ny * offsetDistance };
         
-        // Now find intersection of this offset line with the previous edge's offset line
-        // The previous edge is from vertices[(i-1+n)%n] to vertices[i]
+        // Find intersection with previous edge's offset line
         const prevIdx = (i - 1 + n) % n;
         const v0 = vertices[prevIdx];
         
@@ -189,18 +197,16 @@ function offsetPolygonOutwards(vertices, offsetDistance) {
         const prevEdgeLen = Math.hypot(prevDx, prevDy);
         
         if (prevEdgeLen < 1e-9) {
-            // Previous edge is degenerate, use the offset point
             offsetVerts.push(offsetPoint);
             continue;
         }
         
-        // Previous edge's outward normal
-        const prevNx = prevDy / prevEdgeLen;
-        const prevNy = -prevDx / prevEdgeLen;
+        // Previous edge's outward normal (using same orientation)
+        const prevNx = sign * prevDy / prevEdgeLen;
+        const prevNy = sign * -prevDx / prevEdgeLen;
         
         // Point on previous edge's offset line
-        const prevOffsetPoint = { x: v0.x - prevNx * offsetDistance, y: v0.y - prevNy * offsetDistance };
-        
+        const prevOffsetPoint = { x: v0.x + prevNx * offsetDistance, y: v0.y + prevNy * offsetDistance };
         
         const intersection = lineIntersect2D(
             offsetPoint, { x: dx, y: dy },
@@ -210,7 +216,7 @@ function offsetPolygonOutwards(vertices, offsetDistance) {
         if (intersection) {
             offsetVerts.push(intersection);
         } else {
-            // Lines are parallel (shouldn't happen for convex polygons), use offset point
+            // Lines are parallel, use offset point
             offsetVerts.push(offsetPoint);
         }
     }
@@ -219,53 +225,13 @@ function offsetPolygonOutwards(vertices, offsetDistance) {
 }
 
 /**
- * Create an extruded prism from polygon vertices
- * Creates a solid prism that can be subtracted from the base
- * Normals point outward from the prism for proper CSG operations
+ * Create an extruded prism from polygon vertices.
+ * Creates a solid prism that can be subtracted from the base.
+ * Normals point outward from the prism for proper CSG operations.
+ * Same as createExtrudedPrism - kept as an alias for backward compatibility.
  */
 function createPolygonPrism(vertices2D, zMin, zMax) {
-    if (vertices2D.length < 3) return null;
-    
-    // Ensure vertices are in counter-clockwise order (positive area)
-    let pts = vertices2D;
-    if (signedArea2D(pts) < 0) pts = pts.slice().reverse();
-    
-    const polygons = [];
-    const n = pts.length;
-    
-    // Bottom face - normal pointing down (outward from prism)
-    const bottomVerts = pts.map(p => new CSG.Vertex([p.x, p.y, zMin], [0, 0, -1]));
-    polygons.push(new CSG.Polygon(bottomVerts.slice().reverse()));
-    
-    // Top face - normal pointing up (outward from prism)
-    const topVerts = pts.map(p => new CSG.Vertex([p.x, p.y, zMax], [0, 0, 1]));
-    polygons.push(new CSG.Polygon(topVerts));
-    
-    // Side faces - normals pointing outward from the prism
-    for (let i = 0; i < n; i++) {
-        const j = (i + 1) % n;
-        const p1 = pts[i], p2 = pts[j];
-        const ex = p2.x - p1.x, ey = p2.y - p1.y, len = Math.hypot(ex, ey) || 1;
-        // Normal pointing outward (perpendicular to edge, pointing away from polygon center)
-        const nx = ey / len, ny = -ex / len;
-        
-        polygons.push(new CSG.Polygon([
-            new CSG.Vertex([p1.x, p1.y, zMin], [nx, ny, 0]),
-            new CSG.Vertex([p2.x, p2.y, zMin], [nx, ny, 0]),
-            new CSG.Vertex([p2.x, p2.y, zMax], [nx, ny, 0]),
-            new CSG.Vertex([p1.x, p1.y, zMax], [nx, ny, 0])
-        ]));
-    }
-    
-    return CSG.fromPolygons(polygons);
-}
-
-/**
- * Compute bounding box that includes all points from sketch
- */
-function computeBoundingBoxWithPolygons(sketch, margin) {
-    // This is the same as computeBoundingBoxWithMargin since polygons use same points
-    return computeBoundingBoxWithMargin(sketch, margin);
+    return createExtrudedPrism(vertices2D, zMin, zMax);
 }
 
 /**
