@@ -1337,74 +1337,60 @@ function handleCanvasInput(type, mouseX, mouseY) {
     
     // Line drawing logic
     if (type === 'down') {
+        // Save state before adding the first point for undo
+        const beforeState = saveStateForUndo();
+        
         if (!isDrawing) {
-            // Save state before adding the first point for undo
-            const beforeState = saveStateForUndo();
-            
+            // First click: create start point
             // ALWAYS create a new point, even when snapping to existing ones
             // This allows independent vertex movement in the move tool
             const newIndex = sketch.points.length;
             sketch.points.push({ x: snappedMM.x, y: snappedMM.y });
             startPointIndex = newIndex;
             isDrawing = true;
-            previewPoint = null;
             newPointAdded = true;
             
             // Store beforeState for potential undo
             window.lineDrawBeforeState = beforeState;
             
             drawCanvas();
-        }
-    } else if (type === 'move') {
-        if (isDrawing) {
-            previewPoint = { x: snappedMM.x, y: snappedMM.y };
-            drawCanvas();
-        }
-    } else if (type === 'up') {
-        if (isDrawing) {
+        } else {
+            // Second click: create end point and finalize the line
             isDrawing = false;
             
             let segmentCreated = false;
+            const startPt = sketch.points[startPointIndex];
             
-            if (previewPoint) {
-                const startPt = sketch.points[startPointIndex];
-                const dist = Math.hypot(
-                    previewPoint.x - startPt.x,
-                    previewPoint.y - startPt.y
-                );
+            // ALWAYS create a new end point, even when snapping
+            const endPointIndex = sketch.points.length;
+            sketch.points.push({ x: snappedMM.x, y: snappedMM.y });
+            
+            // Check if this would create a zero-length segment
+            const endPt = sketch.points[endPointIndex];
+            const endDist = Math.hypot(
+                endPt.x - startPt.x,
+                endPt.y - startPt.y
+            );
+            
+            if (startPointIndex !== endPointIndex && endDist > 0.01) {
+                sketch.segments.push({
+                    start: startPointIndex,
+                    end: endPointIndex
+                });
+                segmentCreated = true;
                 
-                if (dist > 0.01) {
-                    // ALWAYS create a new end point, even when snapping
-                    const endPointIndex = sketch.points.length;
-                    sketch.points.push({ x: previewPoint.x, y: previewPoint.y });
-                    
-                    // Check if this would create a zero-length segment
-                    const endPt = sketch.points[endPointIndex];
-                    const endDist = Math.hypot(
-                        endPt.x - startPt.x,
-                        endPt.y - startPt.y
-                    );
-                    if (startPointIndex !== endPointIndex && endDist > 0.01) {
-                        sketch.segments.push({
-                            start: startPointIndex,
-                            end: endPointIndex
-                        });
-                        segmentCreated = true;
-                        
-                        // Record the action for undo (using the state saved before first point was added)
-                        if (window.lineDrawBeforeState) {
-                            recordSimpleAction(window.lineDrawBeforeState);
-                            window.lineDrawBeforeState = null;
-                            updateStatus();
-                        }
-                    } else {
-                        // Remove the end point that was added but not used
-                        sketch.points.pop();
-                    }
+                // Record the action for undo (using the state saved before first point was added)
+                if (window.lineDrawBeforeState) {
+                    recordSimpleAction(window.lineDrawBeforeState);
+                    window.lineDrawBeforeState = null;
+                    updateStatus();
                 }
+            } else {
+                // Remove the end point that was added but not used
+                sketch.points.pop();
             }
             
-            // If a new point was added but no segment was created, remove the orphaned point
+            // If a new point was added but no segment was created, remove the orphaned start point
             if (newPointAdded && !segmentCreated) {
                 sketch.points.pop();
                 // Clear the stored beforeState since we didn't create a segment
@@ -1417,6 +1403,12 @@ function handleCanvasInput(type, mouseX, mouseY) {
             previewPoint = null;
             startPointIndex = null;
             newPointAdded = false;
+            drawCanvas();
+        }
+    } else if (type === 'move') {
+        if (isDrawing) {
+            // Show preview from start point to current mouse position
+            previewPoint = { x: snappedMM.x, y: snappedMM.y };
             drawCanvas();
         }
     }
@@ -1583,6 +1575,26 @@ function initSketchCanvas() {
                 e.preventDefault();
             } else if (e.key === 'y' || e.key === 'Y') {
                 redo();
+                e.preventDefault();
+            }
+        }
+        
+        // Line tool keyboard shortcuts
+        if (currentTool === 'line') {
+            if (e.code === 'Escape') {
+                // Cancel line drawing
+                if (isDrawing) {
+                    isDrawing = false;
+                    previewPoint = null;
+                    startPointIndex = null;
+                    if (newPointAdded) {
+                        sketch.points.pop();
+                        newPointAdded = false;
+                    }
+                    window.lineDrawBeforeState = null; // Clean up saved state
+                    drawCanvas();
+                    updateStatus();
+                }
                 e.preventDefault();
             }
         }
