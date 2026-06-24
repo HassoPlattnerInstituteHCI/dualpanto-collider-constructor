@@ -792,7 +792,7 @@ function updateStatus() {
         }
     } else {
         statusEl.textContent = stats.segmentCount > 0 ? 
-            `${stats.segmentCount} hallway segment(s) drawn` : 'Ready';
+            `${stats.segmentCount} hallway segment(s) drawn` : 'Draw Lines: click to add first vertex, click again to finish line';
     }
 }
 
