@@ -23,17 +23,17 @@ let gridGranularity = 0.2; // 0.1-2.0 range, 0.2 is the preferred default
 
 // Viewport state
 const viewport = {
-    offsetX: 0,    // mm at center of canvas
-    offsetY: 0,    // mm at center of canvas
-    scale: 2,      // pixels per mm
-    panX: 0,       // panning offset in pixels
-    panY: 0        // panning offset in pixels
+    offsetX: 0,        // mm at center of canvas
+    offsetY: -90,      // mm at center of canvas (10cm upwards)
+    scale: 3,         // pixels per mm (50% more zoom than default of 2)
+    panX: 0,          // panning offset in pixels
+    panY: 0           // panning offset in pixels
 };
 
 // Panning state
 let isPanning = false;
 let panStart = { x: 0, y: 0 };
-let commandKeyPressed = false;
+let shiftKeyPressed = false;
 
 // Deletion state
 let isDeleting = false;           // Toggle state for delete mode
@@ -130,8 +130,8 @@ function getCurrentGridInfo() {
  */
 function resetViewport() {
     viewport.offsetX = 0;
-    viewport.offsetY = 0;
-    viewport.scale = 2;
+    viewport.offsetY = -90; // 10cm upwards
+    viewport.scale = 3; // 50% more zoom (was 2)
     viewport.panX = 0;
     viewport.panY = 0;
     drawCanvas();
@@ -1565,11 +1565,10 @@ function initSketchCanvas() {
     window.addEventListener('resize', resizeCanvas);
     
     // Mouse event listeners
-    // Track command key state for panning
+    // Track shift key state for panning
     window.addEventListener('keydown', (e) => {
-        if (e.code === 'MetaLeft' || e.code === 'MetaRight') {
-            commandKeyPressed = true;
-            e.preventDefault();
+        if (e.shiftKey) {
+            shiftKeyPressed = true;
         }
         // Track Option/Alt key for deletion mode
         if (e.key === 'Alt' || e.code === 'AltLeft' || e.code === 'AltRight' || e.code === 'Option') {
@@ -1631,9 +1630,8 @@ function initSketchCanvas() {
     });
     
     window.addEventListener('keyup', (e) => {
-        if (e.code === 'MetaLeft' || e.code === 'MetaRight') {
-            commandKeyPressed = false;
-            e.preventDefault();
+        if (!e.shiftKey) {
+            shiftKeyPressed = false;
         }
         // Track Option/Alt key release
         if (e.key === 'Alt' || e.code === 'AltLeft' || e.code === 'AltRight' || e.code === 'Option') {
@@ -1649,9 +1647,8 @@ function initSketchCanvas() {
         const mouseX = e.clientX - rect.left;
         const mouseY = e.clientY - rect.top;
         
-        // Check if this is a pan gesture (middle mouse button or Command + left click)
-        // But don't pan if we're in move tool and about to drag vertices
-        if ((e.button === 1 || (e.button === 0 && commandKeyPressed)) && currentTool !== 'move') {
+        // Check if this is a pan gesture (middle mouse button or Shift + left click)
+        if (e.button === 1 || (e.button === 0 && shiftKeyPressed)) {
             isPanning = true;
             panStart = { x: mouseX, y: mouseY };
             e.preventDefault();
@@ -1666,8 +1663,8 @@ function initSketchCanvas() {
         const mouseX = e.clientX - rect.left;
         const mouseY = e.clientY - rect.top;
         
-        // Handle panning (but not when moving vertices)
-        if (isPanning && !isMovingVertex) {
+        // Handle panning
+        if (isPanning) {
             const dx = mouseX - panStart.x;
             const dy = mouseY - panStart.y;
             viewport.panX -= dx;

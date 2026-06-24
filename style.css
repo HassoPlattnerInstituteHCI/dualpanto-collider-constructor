@@ -39,17 +39,17 @@ body {
 /* Top bar */
 .top-bar {
     position: fixed;
-    top: 20px;
-    left: 20px;
-    right: 20px;
+    top: 18px;
+    left: 18px;
+    right: 18px;
     z-index: 10;
     background: #fff;
-    padding: 15px 20px;
-    border-radius: 8px;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    padding: 14px 18px 14px 18px;
+    border-radius: 7px;
+    box-shadow: 0 2px 9px rgba(0,0,0,0.1);
     display: flex;
     flex-wrap: wrap;
-    gap: 15px;
+    gap: 14px;
     align-items: center;
 }
 
@@ -72,6 +72,15 @@ body {
     margin-right: 0;
 }
 
+.action-buttons button {
+    padding: 7px 14px;
+    border: none;
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
 /* Vertical toolbar on the left */
 .vertical-toolbar {
     position: fixed;
@@ -87,6 +96,18 @@ body {
     display: flex;
     flex-direction: column;
     gap: 8px;
+    transition: width 0.2s, padding-right 0.2s;
+}
+
+.vertical-toolbar:hover {
+    width: auto;
+    padding-right: 15px;
+}
+
+.tool-item {
+    display: flex;
+    align-items: center;
+    position: relative;
 }
 
 .vertical-toolbar .tool-btn {
@@ -102,6 +123,7 @@ body {
     cursor: pointer;
     transition: all 0.2s;
     color: #333;
+    flex-shrink: 0;
 }
 
 .vertical-toolbar .tool-btn:hover {
@@ -124,6 +146,19 @@ body {
     margin-right: 0;
     width: 24px;
     height: 24px;
+}
+
+.tool-label {
+    margin-left: 12px;
+    font-size: 13px;
+    color: #333;
+    white-space: nowrap;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.vertical-toolbar:hover .tool-label {
+    opacity: 1;
 }
 
 .save-load-controls h1 {
@@ -201,8 +236,8 @@ h1 {
 
 /* Undo/Redo buttons - now in action-buttons */
 #undoBtn, #redoBtn {
-    width: 40px;
-    height: 40px;
+    width: 36px;
+    height: 36px;
     padding: 0;
     display: flex;
     align-items: center;
@@ -229,46 +264,17 @@ h1 {
 
 #undoBtn svg, #redoBtn svg {
     margin-right: 0;
-    width: 24px;
-    height: 24px;
-}
-
-/* Action buttons styling */
-.action-buttons button {
-    padding: 8px 16px;
-    border: none;
-    border-radius: 4px;
-    font-size: 13px;
-    cursor: pointer;
-    transition: all 0.2s;
+    width: 22px;
+    height: 22px;
 }
 
 /* Button icons */
 button svg {
-    margin-right: 8px;
+    margin-right: 7px;
     vertical-align: middle;
     fill: currentColor;
-}
-
-/* Button icons */
-button svg {
-    margin-right: 8px;
-    vertical-align: middle;
-    fill: currentColor;
-}
-
-/* Undo/Redo buttons - square with centered icon */
-#undoBtn, #redoBtn {
-    width: 40px;
-    height: 40px;
-    padding: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-#undoBtn svg, #redoBtn svg {
-    margin-right: 0;
+    width: 22px;
+    height: 22px;
 }
 
 /* Toolbar action buttons */
@@ -369,11 +375,11 @@ button svg {
 }
 
 .sketch-dropdown {
-    padding: 8px 12px;
+    padding: 7px 11px;
     border: 1px solid #ddd;
     border-radius: 4px;
-    font-size: 14px;
-    min-width: 200px;
+    font-size: 13px;
+    min-width: 180px;
     background: #fff;
     cursor: pointer;
     margin: 0;
@@ -392,10 +398,10 @@ button svg {
 }
 
 .sketch-button-group button {
-    padding: 8px 16px;
+    padding: 7px 14px;
     border: none;
     border-radius: 4px;
-    font-size: 13px;
+    font-size: 12px;
     cursor: pointer;
     transition: all 0.2s;
     background: #6c757d;
@@ -536,8 +542,9 @@ button svg {
 /* Responsive adjustments */
 @media (max-width: 768px) {
     .top-bar {
-        left: 20px;
-        right: 20px;
+        left: 18px;
+        right: 18px;
+        padding-left: 20px;
         flex-direction: column;
         align-items: stretch;
     }
@@ -553,9 +560,21 @@ button svg {
         border-radius: 20px;
     }
     
+    .tool-item {
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+    }
+    
     .vertical-toolbar .tool-btn {
         width: 48px;
         height: 48px;
+    }
+    
+    .tool-label {
+        opacity: 1;
+        margin-left: 0;
+        font-size: 11px;
     }
     
     .sketch-dropdown-group {

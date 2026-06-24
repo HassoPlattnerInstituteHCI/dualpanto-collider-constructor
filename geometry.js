@@ -144,6 +144,81 @@ function createExtrudedPrism(points2D, zMin, zMax) {
 }
 
 /**
+ * Offset polygon vertices outwards by a given distance, keeping edges parallel
+ * Each edge is moved outward such that the new edge is parallel to the original
+ * with a distance of offsetDistance between them.
+ * 
+ * This works by creating offset lines for each edge and finding their intersections.
+ */
+function offsetPolygonOutwards(vertices, offsetDistance) {
+    if (vertices.length < 3) return vertices.slice();
+    
+    const n = vertices.length;
+    const offsetVerts = [];
+    
+    for (let i = 0; i < n; i++) {
+        const currIdx = i;
+        const nextIdx = (i + 1) % n;
+        
+        const v1 = vertices[currIdx];
+        const v2 = vertices[nextIdx];
+        
+        // Edge vector from v1 to v2
+        const dx = v2.x - v1.x;
+        const dy = v2.y - v1.y;
+        const edgeLen = Math.hypot(dx, dy);
+        
+        if (edgeLen < 1e-9) {
+            // Degenerate edge (zero length), just offset the point
+            offsetVerts.push({ x: v1.x + offsetDistance, y: v1.y });
+            continue;
+        }
+        
+        const nx = dy / edgeLen;
+        const ny = -dx / edgeLen;
+        
+        const offsetPoint = { x: v1.x - nx * offsetDistance, y: v1.y - ny * offsetDistance };
+        
+        // Now find intersection of this offset line with the previous edge's offset line
+        // The previous edge is from vertices[(i-1+n)%n] to vertices[i]
+        const prevIdx = (i - 1 + n) % n;
+        const v0 = vertices[prevIdx];
+        
+        const prevDx = v1.x - v0.x;
+        const prevDy = v1.y - v0.y;
+        const prevEdgeLen = Math.hypot(prevDx, prevDy);
+        
+        if (prevEdgeLen < 1e-9) {
+            // Previous edge is degenerate, use the offset point
+            offsetVerts.push(offsetPoint);
+            continue;
+        }
+        
+        // Previous edge's outward normal
+        const prevNx = prevDy / prevEdgeLen;
+        const prevNy = -prevDx / prevEdgeLen;
+        
+        // Point on previous edge's offset line
+        const prevOffsetPoint = { x: v0.x - prevNx * offsetDistance, y: v0.y - prevNy * offsetDistance };
+        
+        
+        const intersection = lineIntersect2D(
+            offsetPoint, { x: dx, y: dy },
+            prevOffsetPoint, { x: prevDx, y: prevDy }
+        );
+        
+        if (intersection) {
+            offsetVerts.push(intersection);
+        } else {
+            // Lines are parallel (shouldn't happen for convex polygons), use offset point
+            offsetVerts.push(offsetPoint);
+        }
+    }
+    
+    return offsetVerts;
+}
+
+/**
  * Create an extruded prism from polygon vertices
  * Creates a solid prism that can be subtracted from the base
  * Normals point outward from the prism for proper CSG operations
@@ -296,9 +371,11 @@ function generateCSGModel(sketch, extrusionHeight, hallwayWidth, miterLimit = 4)
         sketch.polygons.forEach(poly => {
             if (poly.vertices.length >= 3) {
                 // Get the vertices for this polygon
-                const polyVertices = poly.vertices.map(vIdx => sketch.points[vIdx]);
+                let polyVertices = poly.vertices.map(vIdx => sketch.points[vIdx]);
                 
-                // Create a prism for the polygon and subtract it from the base
+                // Enlarge polygon by moving each vertex outwards by half of hallway width
+                polyVertices = offsetPolygonOutwards(polyVertices, r);
+                
                 const polyVolume = createPolygonPrism(polyVertices, 0, extrusionHeight);
                 if (polyVolume) {
                     base = base.subtract(polyVolume);
@@ -326,6 +403,7 @@ if (typeof module !== 'undefined' && module.exports) {
         createCSGCube,
         createBaseCube,
         createExtrudedPrism,
-        createPolygonPrism
+        createPolygonPrism,
+        offsetPolygonOutwards
     };
 }
