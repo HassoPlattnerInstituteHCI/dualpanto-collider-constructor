@@ -825,16 +825,20 @@ function handleVertexMoveInput(type, mm) {
             // We're currently dragging - move the vertices
             const snappedMM = snapToGrid(mm.x, mm.y);
             
-            // Calculate offset from the SNAPPED drag start position
-            // Both start and current positions are snapped to ensure vertices land on grid
+            // Calculate offset from the RAW drag start position to snapped current position
+            // This allows vertices created on finer grids to snap properly to coarser grids
             const dx = snappedMM.x - dragStartMM.x;
             const dy = snappedMM.y - dragStartMM.y;
             
             // Move all candidate vertices from their original positions by the offset
+            // Then snap to grid to ensure vertices land exactly on grid points
+            const gridSpacing = getAdaptiveGridSpacing();
             moveVertexCandidates.forEach(idx => {
+                const newX = dragOriginalPositions.get(idx).x + dx;
+                const newY = dragOriginalPositions.get(idx).y + dy;
                 sketch.points[idx] = {
-                    x: dragOriginalPositions.get(idx).x + dx,
-                    y: dragOriginalPositions.get(idx).y + dy
+                    x: Math.round(newX / gridSpacing) * gridSpacing,
+                    y: Math.round(newY / gridSpacing) * gridSpacing
                 };
             });
             
@@ -871,9 +875,10 @@ function handleVertexMoveInput(type, mm) {
             const beforeState = saveStateForUndo();
             
             isMovingVertex = true;
-            // Snap the drag start position to grid so vertices land on grid
-            const snappedStart = snapToGrid(mm.x, mm.y);
-            dragStartMM = { x: snappedStart.x, y: snappedStart.y };
+            // Store the RAW (unsnapped) drag start position
+            // This allows vertices to snap to grid properly even if they were
+            // created on a finer grid
+            dragStartMM = { x: mm.x, y: mm.y };
             
             // Store original positions - these never change during the drag
             dragOriginalPositions = new Map();
