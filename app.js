@@ -666,17 +666,12 @@ function initControls() {
         });
     }
     
-    // Download button - auto-generates model if needed
+    // Download button - generates a new model from current sketch every time
     document.getElementById('downloadBtn').addEventListener('click', () => {
-        if (generatedOBJ) {
+        generate3DModel(() => {
             const segmentCount = sketch.segments.length;
             downloadOBJ(generatedOBJ, `maze_${segmentCount}_segments.obj`);
-        } else {
-            generate3DModel(() => {
-                const segmentCount = sketch.segments.length;
-                downloadOBJ(generatedOBJ, `maze_${segmentCount}_segments.obj`);
-            });
-        }
+        });
     });
     
     // Save/Load controls
