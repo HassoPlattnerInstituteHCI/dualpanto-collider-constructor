@@ -553,12 +553,16 @@ function initToolShortcuts() {
         // Tool selection keyboard shortcuts
         if (e.key && !e.ctrlKey && !e.metaKey && !e.altKey) {
             switch (e.key.toLowerCase()) {
-                case 'l':
+                case 'h':
                     setTool('line');
                     e.preventDefault();
                     break;
                 case 'p':
                     setTool('polygon');
+                    e.preventDefault();
+                    break;
+                case 'r':
+                    setTool('rectangle');
                     e.preventDefault();
                     break;
                 case 'm':
@@ -599,6 +603,13 @@ function setTool(toolName) {
         polygonAddedPoints = [];
         previewPoint = null;
         window.polygonBeforeState = null; // Clean up saved state
+    }
+    if (toolName !== 'rectangle') {
+        isDrawingRectangle = false;
+        rectangleStartIndex = null;
+        rectangleAddedPoints = [];
+        previewPoint = null;
+        window.rectangleBeforeState = null; // Clean up saved state
     }
     
     // Clear move vertex state when switching away from move
@@ -783,6 +794,14 @@ function updateStatus() {
             statusEl.textContent = stats.polygonCount > 0 
                 ? `${stats.polygonCount} polygon(s), ${stats.segmentCount} hallway segment(s)` 
                 : stats.segmentCount > 0 ? `${stats.segmentCount} hallway segment(s)` : 'draw polygon: click to add vertex';
+        }
+    } else if (currentTool === 'rectangle') {
+        if (isDrawingRectangle) {
+            statusEl.textContent = 'Rectangle: click to set opposite corner or press Escape to cancel';
+        } else {
+            statusEl.textContent = stats.polygonCount > 0 
+                ? `${stats.polygonCount} polygon(s), ${stats.segmentCount} hallway segment(s)` 
+                : stats.segmentCount > 0 ? `${stats.segmentCount} hallway segment(s)` : 'draw rectangle: click to set first corner';
         }
     } else if (currentTool === 'move') {
         if (moveVertexCandidates.length > 0) {

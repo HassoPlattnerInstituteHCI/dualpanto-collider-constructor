@@ -42,7 +42,7 @@ let polygonDeletionCandidates = []; // Array of polygon indices to delete
 let optionKeyPressed = false;    // Track Option/Alt key state
 
 // Tool state
-let currentTool = 'line';         // 'line' | 'polygon' | 'delete'
+let currentTool = 'line';         // 'line' | 'polygon' | 'delete' | 'rectangle'
 
 // Drawing state (for line tool)
 let isDrawing = false;
@@ -55,6 +55,11 @@ let isDrawingPolygon = false;
 let polygonVertices = [];         // Array of point indices for current polygon
 let polygonStartIndex = null;    // Index of first vertex for current polygon
 let polygonAddedPoints = [];     // Track indices of points added during current polygon drawing
+
+// Rectangle drawing state
+let isDrawingRectangle = false;
+let rectangleStartIndex = null;  // Index of first corner point
+let rectangleAddedPoints = [];   // Track indices of points added during rectangle drawing
 
 // Move vertex tool state
 let isMovingVertex = false;
@@ -450,6 +455,56 @@ function removePolygonOrphanedPoints() {
     polygonAddedPoints = [];
 }
 
+/**
+ * Remove orphaned points that were added during rectangle drawing
+ * Call this when rectangle is discarded (Escape or mouseleave)
+ */
+function removeRectangleOrphanedPoints() {
+    if (rectangleAddedPoints.length === 0) return;
+    
+    // Create a set of indices to delete
+    const indicesToDelete = new Set(rectangleAddedPoints);
+    
+    // Find all point indices that are still referenced
+    const usedPointIndices = new Set();
+    sketch.segments.forEach(seg => {
+        usedPointIndices.add(seg.start);
+        usedPointIndices.add(seg.end);
+    });
+    sketch.polygons.forEach(poly => {
+        poly.vertices.forEach(vIdx => usedPointIndices.add(vIdx));
+    });
+    
+    // Only keep points that are still referenced
+    const usedPoints = [];
+    const pointMap = new Map();
+    let newIndex = 0;
+    
+    sketch.points.forEach((p, oldIndex) => {
+        if (usedPointIndices.has(oldIndex) || !indicesToDelete.has(oldIndex)) {
+            pointMap.set(oldIndex, newIndex);
+            usedPoints.push(p);
+            newIndex++;
+        }
+    });
+    
+    sketch.points = usedPoints;
+    
+    // Remap segment indices
+    sketch.segments.forEach(seg => {
+        seg.start = pointMap.get(seg.start);
+        seg.end = pointMap.get(seg.end);
+    });
+    
+    // Remap polygon vertex indices
+    sketch.polygons.forEach(poly => {
+        poly.vertices = poly.vertices.map(vIdx => pointMap.get(vIdx));
+    });
+    
+    // Clear the tracking array
+    rectangleAddedPoints = [];
+}
+
 // ============================================
 // POLYGON DELETION HELPERS
 // ============================================
@@ -599,11 +654,54 @@ function deletePolygons(polygonIndices) {
 // ============================================
 
 /**
+ * Find all line vertices that lie on the perimeter of a polygon
+ * @param {Object} poly - Polygon with vertices array
+ * @returns {Array} - Array of point indices that lie on polygon edges
+ */
+function findVerticesOnPolygonPerimeter(poly) {
+    const verticesOnPerimeter = [];
+    const threshold = getAdaptiveGridSpacing() * 0.1; // Small threshold for on-edge detection
+    
+    // Check each line segment endpoint to see if it lies on any polygon edge
+    sketch.segments.forEach(seg => {
+        const lineStart = sketch.points[seg.start];
+        const lineEnd = sketch.points[seg.end];
+        
+        // Check if either endpoint of the line lies on any polygon edge
+        for (let i = 0; i < poly.vertices.length; i++) {
+            const polyStart = sketch.points[poly.vertices[i]];
+            const polyEnd = sketch.points[poly.vertices[(i + 1) % poly.vertices.length]];
+            
+            // Check if line start point is on this polygon edge
+            const distStartToEdge = distanceToSegment(lineStart.x, lineStart.y, polyStart, polyEnd);
+            if (distStartToEdge < threshold) {
+                // Make sure this vertex isn't already a polygon vertex
+                if (!poly.vertices.includes(seg.start) && !verticesOnPerimeter.includes(seg.start)) {
+                    verticesOnPerimeter.push(seg.start);
+                }
+            }
+            
+            // Check if line end point is on this polygon edge
+            const distEndToEdge = distanceToSegment(lineEnd.x, lineEnd.y, polyStart, polyEnd);
+            if (distEndToEdge < threshold) {
+                // Make sure this vertex isn't already a polygon vertex
+                if (!poly.vertices.includes(seg.end) && !verticesOnPerimeter.includes(seg.end)) {
+                    verticesOnPerimeter.push(seg.end);
+                }
+            }
+        }
+    });
+    
+    return verticesOnPerimeter;
+}
+
+/**
  * Find vertices that should be highlighted/moved based on cursor position.
  * Selection algorithm:
  * 1. Find all vertices closer to cursor than currently visible grid size
  * 2. If these vertices are in multiple locations, select only those at the location closest to cursor
  * 3. From these vertices, select only those connected to the edge which is closest to cursor
+ * 4. If cursor is inside a polygon with no close vertices, select all polygon vertices + perimeter line vertices
  * 
  * @param {number} mmX - Cursor X position in mm
  * @param {number} mmY - Cursor Y position in mm
@@ -611,6 +709,19 @@ function deletePolygons(polygonIndices) {
  */
 function findMoveVertexCandidates(mmX, mmY) {
     const gridSpacing = getAdaptiveGridSpacing();
+    const point = { x: mmX, y: mmY };
+    
+    // Step 0: Check if cursor is inside any polygon
+    // If cursor is inside a polygon and there are no close vertices, return all vertices of that polygon + perimeter line vertices
+    let polygonContainingCursor = null;
+    
+    for (let i = 0; i < sketch.polygons.length; i++) {
+        const poly = sketch.polygons[i];
+        if (poly.vertices.length >= 3 && pointInPolygon(point, poly.vertices)) {
+            polygonContainingCursor = poly;
+            break; // For now, just take the first polygon containing the cursor
+        }
+    }
     
     // Step 1: Find all vertices within gridSpacing distance of cursor
     const closeVertices = [];
@@ -624,6 +735,34 @@ function findMoveVertexCandidates(mmX, mmY) {
     });
     
     if (closeVertices.length === 0) {
+        // No vertices are close to cursor - check if cursor is inside a polygon
+        if (polygonContainingCursor) {
+            // Get all vertices of the polygon
+            const polyVertices = [...polygonContainingCursor.vertices];
+            
+            // Find all line vertices that lie on the polygon perimeter
+            const perimeterVertices = findVerticesOnPolygonPerimeter(polygonContainingCursor);
+            
+            // Combine polygon vertices and perimeter vertices for moving
+            const allVerticesToMove = [...polyVertices, ...perimeterVertices];
+            
+            // Set all edges of the polygon for highlighting
+            const allPolygonEdges = [];
+            for (let i = 0; i < polyVertices.length; i++) {
+                const startIdx = polyVertices[i];
+                const endIdx = polyVertices[(i + 1) % polyVertices.length];
+                allPolygonEdges.push({
+                    start: startIdx,
+                    end: endIdx,
+                    isPolygon: true
+                });
+            }
+            moveClosestEdge = allPolygonEdges.length > 0 ? allPolygonEdges[0] : null;
+            moveClosestEdges = allPolygonEdges;
+            
+            return allVerticesToMove;
+        }
+        
         moveClosestEdge = null;
         moveClosestEdges = [];
         return [];
@@ -967,9 +1106,16 @@ function clearSketch() {
     polygonVertices = [];
     polygonStartIndex = null;
     polygonAddedPoints = [];
+    isDrawingRectangle = false;
+    rectangleStartIndex = null;
+    rectangleAddedPoints = [];
     polygonDeletionCandidates = [];
     deletionCandidates = [];
+    moveVertexCandidates = [];
+    moveClosestEdge = null;
+    moveClosestEdges = [];
     window.polygonBeforeState = null; // Clean up saved state
+    window.rectangleBeforeState = null; // Clean up saved state
     
     // Record the action for undo
     if (beforeState) {
@@ -1262,6 +1408,59 @@ function drawPreview() {
             ctx.setLineDash([]);
         }
     }
+    
+    // Draw rectangle tool preview
+    if (currentTool === 'rectangle' && isDrawingRectangle && rectangleStartIndex !== null) {
+        const startPt = sketch.points[rectangleStartIndex];
+        const startPixel = mmToPixel(startPt.x, startPt.y);
+        
+        if (previewPoint) {
+            // Calculate rectangle corners based on start point and preview point
+            const previewPt = previewPoint;
+            const minX = Math.min(startPt.x, previewPt.x);
+            const maxX = Math.max(startPt.x, previewPt.x);
+            const minY = Math.min(startPt.y, previewPt.y);
+            const maxY = Math.max(startPt.y, previewPt.y);
+            
+            // Convert to pixels
+            const corner1Px = mmToPixel(minX, minY);
+            const corner2Px = mmToPixel(maxX, minY);
+            const corner3Px = mmToPixel(maxX, maxY);
+            const corner4Px = mmToPixel(minX, maxY);
+            
+            // Draw rectangle preview (dashed blue to match polygon tool)
+            ctx.strokeStyle = '#004880';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([4, 4]);
+            ctx.beginPath();
+            ctx.moveTo(corner1Px.x, corner1Px.y);
+            ctx.lineTo(corner2Px.x, corner2Px.y);
+            ctx.lineTo(corner3Px.x, corner3Px.y);
+            ctx.lineTo(corner4Px.x, corner4Px.y);
+            ctx.closePath();
+            ctx.stroke();
+            ctx.setLineDash([]);
+            
+            // Draw preview point
+            const previewPixel = mmToPixel(previewPt.x, previewPt.y);
+            ctx.fillStyle = '#004880';
+            ctx.beginPath();
+            ctx.arc(previewPixel.x, previewPixel.y, 3, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Highlight the start point
+            ctx.fillStyle = '#0080ff';
+            ctx.beginPath();
+            ctx.arc(startPixel.x, startPixel.y, 5, 0, Math.PI * 2);
+            ctx.fill();
+        } else {
+            // Highlight the start point
+            ctx.fillStyle = '#0080ff';
+            ctx.beginPath();
+            ctx.arc(startPixel.x, startPixel.y, 5, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
 }
 
 function drawCanvas() {
@@ -1281,6 +1480,129 @@ function drawCanvas() {
     // Update grid size display and SVG overlay after drawing
     updateGridDisplay();
     updateSVGOverlay();
+}
+
+// ============================================
+// RECTANGLE INPUT HANDLING
+// ============================================
+
+/**
+ * Handle rectangle drawing input
+ * @param {string} type - 'down', 'move', or 'up'
+ * @param {Object} snappedMM - {x, y} snapped to grid/existing points
+ */
+function handleRectangleInput(type, snappedMM) {
+    if (type === 'down') {
+        // Save state before adding any points for this rectangle
+        const rectangleBeforeState = saveStateForUndo();
+        
+        if (!isDrawingRectangle) {
+            // Start a new rectangle
+            rectangleAddedPoints = []; // Reset tracking for new rectangle
+            
+            // ALWAYS create a new point, even when snapping to existing ones
+            // This allows independent vertex movement in the move tool
+            rectangleStartIndex = sketch.points.length;
+            sketch.points.push({ x: snappedMM.x, y: snappedMM.y });
+            rectangleAddedPoints.push(rectangleStartIndex);
+            isDrawingRectangle = true;
+            previewPoint = null; // Reset preview point for new rectangle
+            
+            // Store the before state in a window variable for later use
+            window.rectangleBeforeState = rectangleBeforeState;
+            
+            drawCanvas();
+        } else {
+            // Second click: complete the rectangle
+            const startPt = sketch.points[rectangleStartIndex];
+            const endPt = snappedMM;
+            
+            // Calculate all four corners of the axis-aligned rectangle
+            const minX = Math.min(startPt.x, endPt.x);
+            const maxX = Math.max(startPt.x, endPt.x);
+            const minY = Math.min(startPt.y, endPt.y);
+            const maxY = Math.max(startPt.y, endPt.y);
+            
+            // Create the four corners of the rectangle
+            const cornerIndices = [];
+            
+            // Corner 1: start point (minX, minY) or (maxX, maxY) depending on drag direction
+            // We need to create all 4 corners and then figure out which ones we already have
+            const allCorners = [
+                { x: minX, y: minY },
+                { x: maxX, y: minY },
+                { x: maxX, y: maxY },
+                { x: minX, y: maxY }
+            ];
+            
+            // Map each corner to an index (either existing or new)
+            const cornerToIndex = new Map();
+            const gridSpacing = getAdaptiveGridSpacing();
+            const threshold = gridSpacing * 0.1;
+            
+            // Check existing points first (including the start point)
+            for (let i = 0; i < allCorners.length; i++) {
+                const corner = allCorners[i];
+                
+                // Check if this corner already exists in our sketch
+                let foundIndex = -1;
+                for (let j = 0; j < sketch.points.length; j++) {
+                    const pt = sketch.points[j];
+                    const dx = corner.x - pt.x;
+                    const dy = corner.y - pt.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    
+                    if (dist < threshold) {
+                        foundIndex = j;
+                        break;
+                    }
+                }
+                
+                if (foundIndex === -1) {
+                    // Create new point
+                    foundIndex = sketch.points.length;
+                    sketch.points.push(corner);
+                    rectangleAddedPoints.push(foundIndex);
+                }
+                
+                cornerToIndex.set(i, foundIndex);
+            }
+            
+            // Get the four corner indices in order
+            const vertices = [
+                cornerToIndex.get(0), // bottom-left (minX, minY)
+                cornerToIndex.get(1), // bottom-right (maxX, minY)
+                cornerToIndex.get(2), // top-right (maxX, maxY)
+                cornerToIndex.get(3)  // top-left (minX, maxY)
+            ];
+            
+            // Create the polygon
+            sketch.polygons.push({
+                vertices: vertices
+            });
+            
+            // Record the action for undo
+            if (window.rectangleBeforeState) {
+                recordSimpleAction(window.rectangleBeforeState);
+                window.rectangleBeforeState = null;
+            }
+            
+            // Reset rectangle drawing state
+            isDrawingRectangle = false;
+            rectangleStartIndex = null;
+            rectangleAddedPoints = [];
+            previewPoint = null;
+            
+            drawCanvas();
+            updateStatus();
+        }
+    } else if (type === 'move') {
+        if (isDrawingRectangle) {
+            // Update preview point for cursor tracking
+            previewPoint = snappedMM;
+            drawCanvas();
+        }
+    }
 }
 
 // ============================================
@@ -1326,6 +1648,12 @@ function handleCanvasInput(type, mouseX, mouseY) {
             }
         }
         return;  // Don't handle drawing in deletion mode
+    }
+    
+    // Rectangle drawing logic
+    if (currentTool === 'rectangle') {
+        handleRectangleInput(type, snappedMM);
+        return;
     }
     
     // Polygon drawing logic
@@ -1644,6 +1972,22 @@ function initSketchCanvas() {
                 e.preventDefault();
             }
         }
+        
+        // Rectangle tool keyboard shortcuts
+        if (currentTool === 'rectangle') {
+            if (e.code === 'Escape') {
+                // Cancel rectangle drawing
+                if (isDrawingRectangle) {
+                    isDrawingRectangle = false;
+                    rectangleStartIndex = null;
+                    window.rectangleBeforeState = null; // Clean up saved state
+                    removeRectangleOrphanedPoints();
+                    drawCanvas();
+                    updateStatus();
+                }
+                e.preventDefault();
+            }
+        }
     });
     
     window.addEventListener('keyup', (e) => {
@@ -1725,6 +2069,15 @@ function initSketchCanvas() {
             previewPoint = null;
             window.polygonBeforeState = null; // Clean up saved state
             removePolygonOrphanedPoints();
+            drawCanvas();
+        }
+        if (isDrawingRectangle) {
+            // Cancel rectangle drawing on mouse leave
+            isDrawingRectangle = false;
+            rectangleStartIndex = null;
+            previewPoint = null;
+            window.rectangleBeforeState = null; // Clean up saved state
+            removeRectangleOrphanedPoints();
             drawCanvas();
         }
         if (isPanning) {
@@ -1959,6 +2312,10 @@ function importSketchState(state) {
     polygonStartIndex = null;
     window.polygonBeforeState = null; // Clean up saved state
     polygonAddedPoints = [];
+    isDrawingRectangle = false;
+    rectangleStartIndex = null;
+    window.rectangleBeforeState = null; // Clean up saved state
+    rectangleAddedPoints = [];
     
     // Clear selection states
     moveVertexCandidates = [];
