@@ -142,7 +142,8 @@ body {
     border-color: #00355a;
 }
 
-.vertical-toolbar .tool-btn svg {
+.vertical-toolbar .tool-btn svg,
+.vertical-toolbar .tool-btn img {
     margin-right: 0;
     width: 24px;
     height: 24px;
@@ -262,19 +263,43 @@ h1 {
     cursor: not-allowed;
 }
 
-#undoBtn svg, #redoBtn svg {
+#undoBtn:disabled img, #redoBtn:disabled img {
+    filter: brightness(5) saturate(0.5);
+}
+
+#undoBtn svg, #undoBtn img,
+#redoBtn svg, #redoBtn img {
     margin-right: 0;
     width: 22px;
     height: 22px;
 }
 
 /* Button icons */
-button svg {
+button svg,
+button img {
     margin-right: 7px;
     vertical-align: middle;
-    fill: currentColor;
     width: 22px;
     height: 22px;
+}
+
+button img {
+    fill: currentColor; /* This won't work for img, but keeps the rule for svg */
+}
+
+/* Icon color for top bar buttons - white icons (excluding undo/redo) */
+.top-bar button img:not(#undoBtn img):not(#redoBtn img) {
+    filter: brightness(0) invert(1);
+}
+
+/* Icon color for vertical toolbar buttons - dark grey by default */
+.vertical-toolbar .tool-btn img {
+    filter: none;
+}
+
+/* Icon color for vertical toolbar buttons - white when active */
+.vertical-toolbar .tool-btn.active img {
+    filter: brightness(0) invert(1);
 }
 
 /* Toolbar action buttons */
