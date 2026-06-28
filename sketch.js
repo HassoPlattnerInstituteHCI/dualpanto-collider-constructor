@@ -654,6 +654,45 @@ function deletePolygons(polygonIndices) {
 // ============================================
 
 /**
+ * Find all line vertices that lie on a specific edge
+ * @param {number} edgeStart - Start point index of the edge
+ * @param {number} edgeEnd - End point index of the edge
+ * @returns {Array} - Array of line vertex indices that lie on this edge
+ */
+function findVerticesOnEdge(edgeStart, edgeEnd) {
+    const verticesOnEdge = [];
+    const threshold = getAdaptiveGridSpacing() * 0.1; // Small threshold for on-edge detection
+    const edgeStartPt = sketch.points[edgeStart];
+    const edgeEndPt = sketch.points[edgeEnd];
+    
+    // Check each line segment endpoint to see if it lies on this edge
+    sketch.segments.forEach(seg => {
+        const lineStart = sketch.points[seg.start];
+        const lineEnd = sketch.points[seg.end];
+        
+        // Check if line start point is on this edge
+        const distStartToEdge = distanceToSegment(lineStart.x, lineStart.y, edgeStartPt, edgeEndPt);
+        if (distStartToEdge < threshold) {
+            // Make sure this vertex isn't already one of the edge endpoints
+            if (seg.start !== edgeStart && seg.start !== edgeEnd && !verticesOnEdge.includes(seg.start)) {
+                verticesOnEdge.push(seg.start);
+            }
+        }
+        
+        // Check if line end point is on this edge
+        const distEndToEdge = distanceToSegment(lineEnd.x, lineEnd.y, edgeStartPt, edgeEndPt);
+        if (distEndToEdge < threshold) {
+            // Make sure this vertex isn't already one of the edge endpoints
+            if (seg.end !== edgeStart && seg.end !== edgeEnd && !verticesOnEdge.includes(seg.end)) {
+                verticesOnEdge.push(seg.end);
+            }
+        }
+    });
+    
+    return verticesOnEdge;
+}
+
+/**
  * Find all line vertices that lie on the perimeter of a polygon
  * @param {Object} poly - Polygon with vertices array
  * @returns {Array} - Array of point indices that lie on polygon edges
@@ -698,10 +737,13 @@ function findVerticesOnPolygonPerimeter(poly) {
 /**
  * Find vertices that should be highlighted/moved based on cursor position.
  * Selection algorithm:
- * 1. Find all vertices closer to cursor than currently visible grid size
- * 2. If these vertices are in multiple locations, select only those at the location closest to cursor
- * 3. From these vertices, select only those connected to the edge which is closest to cursor
- * 4. If cursor is inside a polygon with no close vertices, select all polygon vertices + perimeter line vertices
+ * 1. Check for edge selection: if cursor is closer to an edge than grid size,
+ *    the edge is the unique closest, and cursor is farther from both vertices
+ *    than min(gridSize, edgeLength/4), select both edge vertices
+ * 2. Find all vertices closer to cursor than currently visible grid size
+ * 3. If these vertices are in multiple locations, select only those at the location closest to cursor
+ * 4. From these vertices, select only those connected to the edge which is closest to cursor
+ * 5. If cursor is inside a polygon with no close vertices, select all polygon vertices + perimeter line vertices
  * 
  * @param {number} mmX - Cursor X position in mm
  * @param {number} mmY - Cursor Y position in mm
@@ -723,7 +765,92 @@ function findMoveVertexCandidates(mmX, mmY) {
         }
     }
     
-    // Step 1: Find all vertices within gridSpacing distance of cursor
+    // Step 1: Check for edge selection (when hovering over an edge)
+    // An edge should be selected if:
+    // 1. Cursor is closer to the edge than gridSpacing
+    // 2. There is no other edge that is closer to the cursor (unique closest)
+    // 3. Distance to each vertex is > min(gridSpacing, edgeLength / 4)
+    // Collect all edges (segments and polygon edges) with their distances
+    const allEdges = [];
+    
+    // Reset edge selection state
+    moveClosestEdge = null;
+    moveClosestEdges = [];
+    
+    // Add line segments
+    sketch.segments.forEach((seg, segIdx) => {
+        const p1 = sketch.points[seg.start];
+        const p2 = sketch.points[seg.end];
+        const dist = distanceToSegment(mmX, mmY, p1, p2);
+        const length = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+        allEdges.push({
+            start: seg.start,
+            end: seg.end,
+            dist: dist,
+            length: length,
+            isPolygon: false,
+            segIdx: segIdx
+        });
+    });
+    
+    // Add polygon edges
+    sketch.polygons.forEach((poly, polyIdx) => {
+        if (poly.vertices.length < 2) return;
+        for (let i = 0; i < poly.vertices.length; i++) {
+            const startIdx = poly.vertices[i];
+            const endIdx = poly.vertices[(i + 1) % poly.vertices.length];
+            const p1 = sketch.points[startIdx];
+            const p2 = sketch.points[endIdx];
+            const dist = distanceToSegment(mmX, mmY, p1, p2);
+            const length = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+            allEdges.push({
+                start: startIdx,
+                end: endIdx,
+                dist: dist,
+                length: length,
+                isPolygon: true,
+                segIdx: polyIdx
+            });
+        }
+    });
+    
+    // Find edges within gridSpacing (condition 1)
+    const closeEdges = allEdges.filter(e => e.dist < gridSpacing);
+    
+    if (closeEdges.length > 0) {
+        // Find minimum distance
+        const minDist = Math.min(...closeEdges.map(e => e.dist));
+        
+        // Find all edges at minimum distance (condition 2: must be unique)
+        const edgesAtMinDist = closeEdges.filter(e => Math.abs(e.dist - minDist) < 0.001);
+        
+        // If there's exactly one edge at the minimum distance
+        if (edgesAtMinDist.length === 1) {
+            const edge = edgesAtMinDist[0];
+            const p1 = sketch.points[edge.start];
+            const p2 = sketch.points[edge.end];
+            
+            // Condition 3: distance to each vertex > min(gridSpacing, edgeLength / 4)
+            const threshold = Math.min(gridSpacing, edge.length * 0.25);
+            const distToStart = Math.hypot(p1.x - mmX, p1.y - mmY);
+            const distToEnd = Math.hypot(p2.x - mmX, p2.y - mmY);
+            
+            if (distToStart > threshold && distToEnd > threshold) {
+                // Select both vertices of this edge
+                // Also include any line vertices that lie on this edge (for polygon edges)
+                const verticesToMove = [edge.start, edge.end];
+                const verticesOnEdge = findVerticesOnEdge(edge.start, edge.end);
+                verticesToMove.push(...verticesOnEdge);
+                
+                moveClosestEdge = edge;
+                moveClosestEdges = [edge];
+                updateCanvasCursor();
+                return verticesToMove;
+            }
+        }
+    }
+    
+    // Step 2: Find all vertices within gridSpacing distance of cursor
     const closeVertices = [];
     sketch.points.forEach((p, idx) => {
         const dx = p.x - mmX;
@@ -760,11 +887,13 @@ function findMoveVertexCandidates(mmX, mmY) {
             moveClosestEdge = allPolygonEdges.length > 0 ? allPolygonEdges[0] : null;
             moveClosestEdges = allPolygonEdges;
             
+            updateCanvasCursor();
             return allVerticesToMove;
         }
         
         moveClosestEdge = null;
         moveClosestEdges = [];
+        updateCanvasCursor();
         return [];
     }
     
@@ -819,6 +948,7 @@ function findMoveVertexCandidates(mmX, mmY) {
     if (!closestGroup || closestGroup.pointIndices.length === 0) {
         moveClosestEdge = null;
         moveClosestEdges = [];
+        updateCanvasCursor();
         return [];
     }
     
@@ -913,6 +1043,7 @@ function findMoveVertexCandidates(mmX, mmY) {
     if (globalClosestEdgeDist === Infinity) {
         // No edges found - return all vertices in closest group
         moveClosestEdge = null;
+        updateCanvasCursor();
         return closestGroup.pointIndices;
     }
     
@@ -950,6 +1081,7 @@ function findMoveVertexCandidates(mmX, mmY) {
     // Actually, let's store all of them in a new variable
     moveClosestEdges = closestEdges;
     
+    updateCanvasCursor();
     return selectedVertices;
 }
 
@@ -1044,6 +1176,7 @@ function handleVertexMoveInput(type, mm) {
             dragStartMM = null;
             dragOriginalPositions = null;
             // Keep moveVertexCandidates for continuous highlighting
+            updateCanvasCursor();
             drawCanvas();
         }
     }
@@ -1116,6 +1249,9 @@ function clearSketch() {
     moveClosestEdges = [];
     window.polygonBeforeState = null; // Clean up saved state
     window.rectangleBeforeState = null; // Clean up saved state
+    
+    // Update cursor
+    updateCanvasCursor();
     
     // Record the action for undo
     if (beforeState) {
@@ -1861,6 +1997,26 @@ function handlePolygonInput(type, snappedMM) {
 }
 
 // ============================================
+// CANVAS CURSOR MANAGEMENT
+// ============================================
+
+/**
+ * Update the canvas cursor based on current tool and selection state
+ */
+function updateCanvasCursor() {
+    if (!canvas) return;
+    
+    // Remove all cursor classes first
+    canvas.classList.remove('move-cursor');
+    
+    // Add move cursor when in move tool and there are highlighted elements
+    if (currentTool === 'move' && 
+        (moveVertexCandidates.length > 0 || moveClosestEdges.length > 0)) {
+        canvas.classList.add('move-cursor');
+    }
+}
+
+// ============================================
 // INITIALIZATION
 // ============================================
 
@@ -2178,6 +2334,9 @@ function restoreState(state) {
     // Clear deletion candidates to prevent stale highlights
     deletionCandidates = [];
     polygonDeletionCandidates = [];
+    
+    // Update cursor
+    updateCanvasCursor();
 }
 
 /**
@@ -2326,6 +2485,9 @@ function importSketchState(state) {
     
     // Clear undo/redo stacks
     clearUndoRedoStacks();
+    
+    // Update cursor
+    updateCanvasCursor();
     
     drawCanvas();
     updateStatus();

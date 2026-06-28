@@ -628,6 +628,11 @@ function setTool(toolName) {
         polygonDeletionCandidates = [];
     }
     
+    // Update canvas cursor based on new tool
+    if (typeof updateCanvasCursor === 'function') {
+        updateCanvasCursor();
+    }
+    
     drawCanvas();
     updateStatus();
 }

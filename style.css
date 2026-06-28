@@ -352,6 +352,14 @@ button img {
     touch-action: none;
 }
 
+#sketchCanvas.move-cursor {
+    cursor: move;
+}
+
+#sketchCanvas.move-cursor:active {
+    cursor: grabbing;
+}
+
 .overlay-svg {
     position: absolute;
     pointer-events: none;
