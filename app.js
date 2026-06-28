@@ -688,6 +688,32 @@ function initControls() {
     // Save/Load controls
     initSaveLoadControls();
     
+    // Help button
+    const helpBtn = document.getElementById('helpBtn');
+    if (helpBtn) {
+        helpBtn.addEventListener('click', () => {
+            showModal('helpModal');
+        });
+    }
+    
+    // Help modal close button
+    const helpCloseBtn = document.getElementById('helpCloseBtn');
+    if (helpCloseBtn) {
+        helpCloseBtn.addEventListener('click', () => {
+            hideModal('helpModal');
+        });
+    }
+    
+    // Close help modal when clicking outside
+    const helpModal = document.getElementById('helpModal');
+    if (helpModal) {
+        helpModal.parentElement.addEventListener('click', (e) => {
+            if (e.target === helpModal.parentElement) {
+                hideModal('helpModal');
+            }
+        });
+    }
+    
     updateStatus();
 }
 

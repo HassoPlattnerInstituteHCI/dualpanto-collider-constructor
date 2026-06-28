@@ -86,6 +86,28 @@
         <span id="segmentCount">Segments: 0</span> |
         <span id="gridSize">Grid: 1.0mm/10.0mm</span> |
         <span id="statusMessage">Ready</span>
+        <button id="helpBtn" class="help-btn" title="Show Help">?</button>
+    </div>
+
+    <!-- Help Modal -->
+    <div id="helpModal" class="help-modal-overlay" hidden>
+        <div class="help-modal">
+            <h3>Quick Help</h3>
+            <ul>
+                <li><strong>L</strong> - Hallway Tool: Click to start, click again to end a hallway</li>
+                <li><strong>P</strong> - Room Tool: Click to add vertices, close the polygon to create a room</li>
+                <li><strong>R</strong> - Rectangular Room Tool: Click to create corner, click again to create opposite corner</li>
+                <li><strong>M</strong> - Move Tool: Hover to select, then click and drag to move. Hover inside a room to move the complete thing and the hallways connected to it, or hover close to a vertex to move just it. For hallways which share a vertex, you can either move the vertex for both, or just for one of them by hovering closer or farther from their respective edges.</li>
+                <li><strong>D</strong> - Delete Tool: Click on hallways or rooms to delete them</li>
+                <li><strong>Alt/Opt</strong> + Click: Delete mode (temporary)</li>
+                <li><strong>Shift</strong> + Drag: Pan the view</li>
+                <li><strong>Scroll</strong>: Zoom in/out</li>
+                <li><strong>Ctrl+Z</strong>: Undo</li>
+                <li><strong>Ctrl+Y</strong>: Redo</li>
+                <li><strong>Escape</strong>: Cancel current action</li>
+            </ul>
+            <button id="helpCloseBtn" class="help-close-btn">Close</button>
+        </div>
     </div>
 
     <!-- Unsaved Changes Confirmation Modal -->
