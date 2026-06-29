@@ -159,7 +159,7 @@ function findMoveVertexCandidates(mmX, mmY) {
                 moveConstraintAxis = edge.isOrthoConnector ? edge.bendAxis : null;
                 
                 updateCanvasCursor();
-                return [edge.start, edge.end, ...findVerticesOnEdge(edge.start, edge.end)];
+                return [edge.start, edge.end, edge.start, edge.end];
             }
         }
     }
@@ -286,13 +286,14 @@ function findMoveVertexCandidates(mmX, mmY) {
     const selectedEdgeKeys = new Set();
     
     for (const vIdx of closestGroup.pointIndices) {
-        if (vertexClosestEdgeDist.get(vIdx) === globalClosestEdgeDist) {
+        // If Command key is pressed, include ALL vertices at this location
+        // Otherwise, only include vertices with edges at the globally closest distance
+        if (commandKeyPressed || vertexClosestEdgeDist.get(vIdx) === globalClosestEdgeDist) {
             selectedVertices.push(vIdx);
             for (const edgeInfo of vertexEdges.get(vIdx)) {
                 const edgeKey = `${edgeInfo.start},${edgeInfo.end}`;
                 const key2 = `${edgeInfo.end},${edgeInfo.start}`;
-                if (!selectedEdgeKeys.has(edgeKey) && !selectedEdgeKeys.has(key2) && 
-                    Math.abs(distanceToSegment(mmX, mmY, sketch.points[edgeInfo.start], sketch.points[edgeInfo.end]) - globalClosestEdgeDist) < 0.001) {
+                if (!selectedEdgeKeys.has(edgeKey) && !selectedEdgeKeys.has(key2) ) {
                     closestEdges.push(edgeInfo);
                     selectedEdgeKeys.add(edgeKey);
                 }

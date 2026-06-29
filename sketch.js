@@ -41,6 +41,7 @@ let isDeleting = false;           // Toggle state for delete mode
 let deletionCandidates = [];     // Array of segment indices to delete
 let polygonDeletionCandidates = []; // Array of polygon indices to delete
 let optionKeyPressed = false;    // Track Option/Alt key state
+let commandKeyPressed = false;   // Track Command/Ctrl key state
 
 // Tool state
 let currentTool = 'line';         // 'line' | 'polygon' | 'delete' | 'rectangle' | 'orthogonal'
@@ -695,6 +696,10 @@ function initSketchCanvas() {
             optionKeyPressed = true;
             e.preventDefault();
         }
+        // Track Command/Ctrl key for move all vertices at location
+        if (e.metaKey || e.ctrlKey) {
+            commandKeyPressed = true;
+        }
         
         // Undo/Redo keyboard shortcuts
         if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
@@ -812,6 +817,10 @@ function initSketchCanvas() {
             deletionCandidates = [];
             drawCanvas();
             e.preventDefault();
+        }
+        // Track Command/Ctrl key release
+        if (!e.metaKey && !e.ctrlKey) {
+            commandKeyPressed = false;
         }
     });
     
