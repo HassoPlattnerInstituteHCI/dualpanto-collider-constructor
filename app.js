@@ -565,6 +565,10 @@ function initToolShortcuts() {
                     setTool('rectangle');
                     e.preventDefault();
                     break;
+                case 'o':
+                    setTool('orthogonal');
+                    e.preventDefault();
+                    break;
                 case 'm':
                     setTool('move');
                     e.preventDefault();
@@ -610,6 +614,13 @@ function setTool(toolName) {
         rectangleAddedPoints = [];
         previewPoint = null;
         window.rectangleBeforeState = null; // Clean up saved state
+    }
+    if (toolName !== 'orthogonal') {
+        isDrawingOrthogonal = false;
+        orthoStartIndex = null;
+        orthoAddedPoints = [];
+        previewPoint = null;
+        window.orthoBeforeState = null; // Clean up saved state
     }
     
     // Clear move vertex state when switching away from move
@@ -833,6 +844,13 @@ function updateStatus() {
             statusEl.textContent = stats.polygonCount > 0 
                 ? `${stats.polygonCount} polygon(s), ${stats.segmentCount} hallway segment(s)` 
                 : stats.segmentCount > 0 ? `${stats.segmentCount} hallway segment(s)` : 'draw rectangle: click to set first corner';
+        }
+    } else if (currentTool === 'orthogonal') {
+        if (isDrawingOrthogonal) {
+            statusEl.textContent = 'Orthogonal: click to set end point or press Escape to cancel';
+        } else {
+            statusEl.textContent = stats.segmentCount > 0 
+                ? `${stats.segmentCount} hallway segment(s) drawn` : 'draw orthogonal line: click to add first vertex, click again to finish';
         }
     } else if (currentTool === 'move') {
         if (moveVertexCandidates.length > 0) {

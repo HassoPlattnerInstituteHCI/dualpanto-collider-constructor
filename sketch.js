@@ -6,9 +6,10 @@ let ctx;
 
 // Sketch data model
 const sketch = {
-    points: [],       // Array of {x: number, y: number} in mm
+    points: [],       // Array of {x: number, y: number, type?: string} in mm
     segments: [],     // Array of {start: index, end: index} referencing points
-    polygons: []      // Array of {vertices: [index, index, ...]} for polygon cutouts
+    polygons: [],      // Array of {vertices: [index, index, ...]} for polygon cutouts
+    orthoLines: []     // Array of orthoLine objects for orthogonal line connections
 };
 
 // Viewport constants
@@ -42,7 +43,7 @@ let polygonDeletionCandidates = []; // Array of polygon indices to delete
 let optionKeyPressed = false;    // Track Option/Alt key state
 
 // Tool state
-let currentTool = 'line';         // 'line' | 'polygon' | 'delete' | 'rectangle'
+let currentTool = 'line';         // 'line' | 'polygon' | 'delete' | 'rectangle' | 'orthogonal'
 
 // Drawing state (for line tool)
 let isDrawing = false;
@@ -61,6 +62,11 @@ let isDrawingRectangle = false;
 let rectangleStartIndex = null;  // Index of first corner point
 let rectangleAddedPoints = [];   // Track indices of points added during rectangle drawing
 
+// Orthogonal line drawing state
+let isDrawingOrthogonal = false;
+let orthoStartIndex = null;     // Index of first endpoint
+let orthoAddedPoints = [];      // Track indices of points added during orthogonal line drawing
+
 // Move vertex tool state
 let isMovingVertex = false;
 let moveVertexCandidates = [];  // Array of point indices to move
@@ -68,6 +74,7 @@ let dragStartMM = null;          // Starting MM position of drag
 let dragOriginalPositions = null; // Original positions of vertices being moved
 let moveClosestEdge = null;     // Edge info for highlighting the closest edge (backwards compat)
 let moveClosestEdges = [];      // Array of all edges at minimum distance for highlighting
+let moveConstraintAxis = null;  // 'x' or 'y' for constrained movement (ortho connector)
 
 // ============================================
 // UNDO/REDO STATE
@@ -316,11 +323,13 @@ function distanceToSegment(px, py, p1, p2) {
 
 /**
  * Find all segments that are within a threshold distance from the given MM position
+ * For orthoLines, if any segment is selected, all 3 segments are added
  * Returns array of segment indices
  */
 function findDeletionCandidates(mmX, mmY) {
     const threshold = getAdaptiveGridSpacing() * 0.5; // Half a grid cell
     const candidates = [];
+    const addedOrthoLines = new Set(); // Track orthoLines already added
     
     sketch.segments.forEach((seg, idx) => {
         const p1 = sketch.points[seg.start];
@@ -328,7 +337,20 @@ function findDeletionCandidates(mmX, mmY) {
         const dist = distanceToSegment(mmX, mmY, p1, p2);
         
         if (dist < threshold) {
-            candidates.push(idx);
+            // Check if this segment belongs to an orthoLine
+            const ol = getOrthoLineBySegment(idx);
+            if (ol) {
+                // Add all segments of this orthoLine
+                if (!addedOrthoLines.has(ol)) {
+                    addedOrthoLines.add(ol);
+                    if (ol.seg1 !== undefined) candidates.push(ol.seg1);
+                    if (ol.seg2 !== undefined) candidates.push(ol.seg2);
+                    if (ol.seg3 !== undefined) candidates.push(ol.seg3);
+                }
+            } else {
+                // Regular segment
+                candidates.push(idx);
+            }
         }
     });
     
@@ -341,6 +363,21 @@ function findDeletionCandidates(mmX, mmY) {
  */
 function deleteSegments(segmentIndices) {
     const indicesToDelete = new Set(segmentIndices);
+    
+    // Remove orthoLines that have ALL their segments being deleted
+    // Only remove an orthoLine if all its defined segments are being deleted
+    sketch.orthoLines = sketch.orthoLines.filter(ol => {
+        const seg1Deleted = ol.seg1 !== undefined && indicesToDelete.has(ol.seg1);
+        const seg2Deleted = ol.seg2 !== undefined && indicesToDelete.has(ol.seg2);
+        const seg3Deleted = ol.seg3 !== undefined && indicesToDelete.has(ol.seg3);
+        
+        // Count how many of its segments are being deleted vs how many it has
+        const totalSegments = (ol.seg1 !== undefined ? 1 : 0) + (ol.seg2 !== undefined ? 1 : 0) + (ol.seg3 !== undefined ? 1 : 0);
+        const deletedSegments = (seg1Deleted ? 1 : 0) + (seg2Deleted ? 1 : 0) + (seg3Deleted ? 1 : 0);
+        
+        // Only remove orthoLine if ALL its segments are being deleted
+        return deletedSegments < totalSegments;
+    });
     
     // Remove segments
     sketch.segments = sketch.segments.filter((_, idx) => !indicesToDelete.has(idx));
@@ -386,16 +423,26 @@ function deleteSegments(segmentIndices) {
 
 /**
  * Remove zero-length segments (where start and end are the same point or same coordinates)
+ * But preserve segments that belong to orthoLines to maintain their structure
  */
 function cleanupZeroLengthSegments() {
     const zeroLengthIndices = [];
+    
+    // Collect all segment indices that belong to orthoLines
+    const orthoLineSegments = new Set();
+    sketch.orthoLines.forEach(ol => {
+        if (ol.seg1 !== undefined) orthoLineSegments.add(ol.seg1);
+        if (ol.seg2 !== undefined) orthoLineSegments.add(ol.seg2);
+        if (ol.seg3 !== undefined) orthoLineSegments.add(ol.seg3);
+    });
     
     sketch.segments.forEach((seg, idx) => {
         const p1 = sketch.points[seg.start];
         const p2 = sketch.points[seg.end];
         const dist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
         
-        if (seg.start === seg.end || dist < 0.01) {
+        // Skip zero-length segments that belong to orthoLines to preserve their structure
+        if ((seg.start === seg.end || dist < 0.01) && !orthoLineSegments.has(idx)) {
             zeroLengthIndices.push(idx);
         }
     });
@@ -753,335 +800,208 @@ function findMoveVertexCandidates(mmX, mmY) {
     const gridSpacing = getAdaptiveGridSpacing();
     const point = { x: mmX, y: mmY };
     
-    // Step 0: Check if cursor is inside any polygon
-    // If cursor is inside a polygon and there are no close vertices, return all vertices of that polygon + perimeter line vertices
-    let polygonContainingCursor = null;
-    
-    for (let i = 0; i < sketch.polygons.length; i++) {
-        const poly = sketch.polygons[i];
-        if (poly.vertices.length >= 3 && pointInPolygon(point, poly.vertices)) {
-            polygonContainingCursor = poly;
-            break; // For now, just take the first polygon containing the cursor
-        }
-    }
-    
-    // Step 1: Check for edge selection (when hovering over an edge)
-    // An edge should be selected if:
-    // 1. Cursor is closer to the edge than gridSpacing
-    // 2. There is no other edge that is closer to the cursor (unique closest)
-    // 3. Distance to each vertex is > min(gridSpacing, edgeLength / 4)
-    // Collect all edges (segments and polygon edges) with their distances
-    const allEdges = [];
-    
-    // Reset edge selection state
+    // Reset edge selection state and constraint
     moveClosestEdge = null;
     moveClosestEdges = [];
+    moveConstraintAxis = null;
     
-    // Add line segments
-    sketch.segments.forEach((seg, segIdx) => {
-        const p1 = sketch.points[seg.start];
-        const p2 = sketch.points[seg.end];
+    // Check if cursor is inside any polygon (for fallback when no vertices are close)
+    const polygonContainingCursor = sketch.polygons.find(poly => 
+        poly.vertices.length >= 3 && pointInPolygon(point, poly.vertices)
+    );
+    
+    // Build all edges (segments + polygon edges) with their distances and lengths
+    const allEdges = [];
+    
+    const addEdge = (startIdx, endIdx, isPolygon, segIdx) => {
+        const p1 = sketch.points[startIdx];
+        const p2 = sketch.points[endIdx];
         const dist = distanceToSegment(mmX, mmY, p1, p2);
         const length = Math.hypot(p2.x - p1.x, p2.y - p1.y);
-        allEdges.push({
-            start: seg.start,
-            end: seg.end,
-            dist: dist,
-            length: length,
-            isPolygon: false,
-            segIdx: segIdx
-        });
-    });
+        const isOrthoConnector = !isPolygon && isOrthoConnectorSegment(segIdx);
+        const bendAxis = isOrthoConnector ? getOrthoConnectorConstraint(segIdx) : null;
+        allEdges.push({ start: startIdx, end: endIdx, dist, length, isPolygon, segIdx, isOrthoConnector, bendAxis });
+    };
     
-    // Add polygon edges
+    sketch.segments.forEach((seg, segIdx) => addEdge(seg.start, seg.end, false, segIdx));
     sketch.polygons.forEach((poly, polyIdx) => {
         if (poly.vertices.length < 2) return;
         for (let i = 0; i < poly.vertices.length; i++) {
             const startIdx = poly.vertices[i];
             const endIdx = poly.vertices[(i + 1) % poly.vertices.length];
-            const p1 = sketch.points[startIdx];
-            const p2 = sketch.points[endIdx];
-            const dist = distanceToSegment(mmX, mmY, p1, p2);
-            const length = Math.hypot(p2.x - p1.x, p2.y - p1.y);
-            allEdges.push({
-                start: startIdx,
-                end: endIdx,
-                dist: dist,
-                length: length,
-                isPolygon: true,
-                segIdx: polyIdx
-            });
+            addEdge(startIdx, endIdx, true, polyIdx);
         }
     });
     
-    // Find edges within gridSpacing (condition 1)
+    // ============================================
+    // Edge Selection (Priority 1): Select entire edge if conditions met
+    // ============================================
     const closeEdges = allEdges.filter(e => e.dist < gridSpacing);
-    
     if (closeEdges.length > 0) {
-        // Find minimum distance
         const minDist = Math.min(...closeEdges.map(e => e.dist));
-        
-        // Find all edges at minimum distance (condition 2: must be unique)
         const edgesAtMinDist = closeEdges.filter(e => Math.abs(e.dist - minDist) < 0.001);
         
-        // If there's exactly one edge at the minimum distance
         if (edgesAtMinDist.length === 1) {
             const edge = edgesAtMinDist[0];
             const p1 = sketch.points[edge.start];
             const p2 = sketch.points[edge.end];
-            
-            // Condition 3: distance to each vertex > min(gridSpacing, edgeLength / 4)
             const threshold = Math.min(gridSpacing, edge.length * 0.25);
             const distToStart = Math.hypot(p1.x - mmX, p1.y - mmY);
             const distToEnd = Math.hypot(p2.x - mmX, p2.y - mmY);
             
             if (distToStart > threshold && distToEnd > threshold) {
-                // Select both vertices of this edge
-                // Also include any line vertices that lie on this edge (for polygon edges)
-                const verticesToMove = [edge.start, edge.end];
-                const verticesOnEdge = findVerticesOnEdge(edge.start, edge.end);
-                verticesToMove.push(...verticesOnEdge);
-                
                 moveClosestEdge = edge;
                 moveClosestEdges = [edge];
+                
+                // Set constraint axis for ortho connector edges
+                moveConstraintAxis = edge.isOrthoConnector ? edge.bendAxis : null;
+                
                 updateCanvasCursor();
-                return verticesToMove;
+                return [edge.start, edge.end, ...findVerticesOnEdge(edge.start, edge.end)];
             }
         }
     }
     
-    // Step 2: Find all vertices within gridSpacing distance of cursor
-    const closeVertices = [];
-    sketch.points.forEach((p, idx) => {
-        const dx = p.x - mmX;
-        const dy = p.y - mmY;
-        const dist = Math.hypot(dx, dy);
-        if (dist < gridSpacing) {
-            closeVertices.push(idx);
-        }
-    });
+    // ============================================
+    // Vertex Selection (Priority 2): Find close vertices
+    // ============================================
+    const closeVertices = sketch.points
+        .map((p, idx) => ({ idx, dist: Math.hypot(p.x - mmX, p.y - mmY) }))
+        .filter(({ dist, idx }) => dist < gridSpacing && !isOrthoJunction(idx))
+        .map(({ idx }) => idx);
     
+    // If no close vertices and cursor is inside a polygon, select entire polygon + perimeter
     if (closeVertices.length === 0) {
-        // No vertices are close to cursor - check if cursor is inside a polygon
         if (polygonContainingCursor) {
-            // Get all vertices of the polygon
             const polyVertices = [...polygonContainingCursor.vertices];
-            
-            // Find all line vertices that lie on the polygon perimeter
             const perimeterVertices = findVerticesOnPolygonPerimeter(polygonContainingCursor);
-            
-            // Combine polygon vertices and perimeter vertices for moving
             const allVerticesToMove = [...polyVertices, ...perimeterVertices];
             
-            // Set all edges of the polygon for highlighting
-            const allPolygonEdges = [];
-            for (let i = 0; i < polyVertices.length; i++) {
-                const startIdx = polyVertices[i];
-                const endIdx = polyVertices[(i + 1) % polyVertices.length];
-                allPolygonEdges.push({
-                    start: startIdx,
-                    end: endIdx,
-                    isPolygon: true
-                });
-            }
-            moveClosestEdge = allPolygonEdges.length > 0 ? allPolygonEdges[0] : null;
-            moveClosestEdges = allPolygonEdges;
-            
+            moveClosestEdge = null;
+            moveClosestEdges = polyVertices.map((startIdx, i) => ({
+                start: startIdx,
+                end: polyVertices[(i + 1) % polyVertices.length],
+                isPolygon: true
+            }));
+            moveConstraintAxis = null;
             updateCanvasCursor();
             return allVerticesToMove;
         }
         
         moveClosestEdge = null;
         moveClosestEdges = [];
+        moveConstraintAxis = null;
         updateCanvasCursor();
         return [];
     }
     
-    // Step 2: Group close vertices by their location (x,y coordinates)
-    // Use a precision threshold for grouping to handle floating point coordinates
-    const locationGroups = []; // Array of {pointIndices: [], avgX, avgY}
-    const GROUP_PRECISION = 0.001; // 0.001mm precision for grouping
+    // ============================================
+    // Group vertices by location and find closest group
+    // ============================================
+    const GROUP_PRECISION = 0.001;
+    const locationGroups = [];
     
-    closeVertices.forEach(idx => {
+    for (const idx of closeVertices) {
         const p = sketch.points[idx];
+        const existingGroup = locationGroups.find(g => 
+            Math.abs(p.x - g.avgX) < GROUP_PRECISION && Math.abs(p.y - g.avgY) < GROUP_PRECISION
+        );
         
-        // Find existing group that this point matches
-        let foundGroup = null;
-        for (const group of locationGroups) {
-            const dx = p.x - group.avgX;
-            const dy = p.y - group.avgY;
-            if (Math.abs(dx) < GROUP_PRECISION && Math.abs(dy) < GROUP_PRECISION) {
-                foundGroup = group;
-                break;
-            }
-        }
-        
-        if (foundGroup) {
-            foundGroup.pointIndices.push(idx);
-            // Update average (not strictly necessary but keeps it accurate)
-            const total = foundGroup.pointIndices.length;
-            foundGroup.avgX = foundGroup.avgX * (total - 1) / total + p.x / total;
-            foundGroup.avgY = foundGroup.avgY * (total - 1) / total + p.y / total;
+        if (existingGroup) {
+            existingGroup.pointIndices.push(idx);
+            const total = existingGroup.pointIndices.length;
+            existingGroup.avgX = existingGroup.avgX * (total - 1) / total + p.x / total;
+            existingGroup.avgY = existingGroup.avgY * (total - 1) / total + p.y / total;
         } else {
-            locationGroups.push({
-                pointIndices: [idx],
-                avgX: p.x,
-                avgY: p.y
-            });
-        }
-    });
-    
-    // Find the location group closest to cursor
-    let closestGroup = null;
-    let closestGroupDist = Infinity;
-    
-    for (const group of locationGroups) {
-        const dx = group.avgX - mmX;
-        const dy = group.avgY - mmY;
-        const dist = Math.hypot(dx, dy);
-        if (dist < closestGroupDist) {
-            closestGroupDist = dist;
-            closestGroup = group;
+            locationGroups.push({ pointIndices: [idx], avgX: p.x, avgY: p.y });
         }
     }
+    
+    const closestGroup = locationGroups.reduce((closest, group) => {
+        const dist = Math.hypot(group.avgX - mmX, group.avgY - mmY);
+        return dist < closest.dist ? { group, dist } : closest;
+    }, { group: null, dist: Infinity }).group;
     
     if (!closestGroup || closestGroup.pointIndices.length === 0) {
         moveClosestEdge = null;
         moveClosestEdges = [];
+        moveConstraintAxis = null;
         updateCanvasCursor();
         return [];
     }
     
-    // Step 3: From vertices in closest group, select only those whose connected edge is closest to cursor
-    // For each vertex at the closest location, find its closest connected edge
-    // Then select only vertices whose closest edge is the overall closest
-    // Also collect ALL edges at the minimum distance for highlighting
-    
-    // Build a map of vertex index -> array of edges it belongs to
+    // ============================================
+    // Select vertices with closest connected edges
+    // ============================================
     const vertexEdges = new Map();
-    closestGroup.pointIndices.forEach(vIdx => {
-        vertexEdges.set(vIdx, []);
-    });
+    closestGroup.pointIndices.forEach(vIdx => vertexEdges.set(vIdx, []));
     
-    // Add regular segments
-    sketch.segments.forEach((seg, segIdx) => {
-        if (closestGroup.pointIndices.includes(seg.start)) {
-            vertexEdges.get(seg.start).push({ 
-                segIdx,
-                start: seg.start,
-                end: seg.end,
-                isPolygon: false
-            });
+    const addConnectedEdges = (startIdx, endIdx, isPolygon, segIdx) => {
+        if (closestGroup.pointIndices.includes(startIdx)) {
+            vertexEdges.get(startIdx).push({ segIdx, start: startIdx, end: endIdx, isPolygon });
         }
-        if (closestGroup.pointIndices.includes(seg.end)) {
-            vertexEdges.get(seg.end).push({ 
-                segIdx,
-                start: seg.start,
-                end: seg.end,
-                isPolygon: false
-            });
+        if (closestGroup.pointIndices.includes(endIdx)) {
+            vertexEdges.get(endIdx).push({ segIdx, start: startIdx, end: endIdx, isPolygon });
         }
-    });
+    };
     
-    // Add polygon edges
+    sketch.segments.forEach((seg, segIdx) => addConnectedEdges(seg.start, seg.end, false, segIdx));
     sketch.polygons.forEach((poly, polyIdx) => {
         if (poly.vertices.length < 3) return;
-        
         for (let i = 0; i < poly.vertices.length; i++) {
             const vIdx = poly.vertices[i];
             if (closestGroup.pointIndices.includes(vIdx)) {
                 const prevIdx = poly.vertices[(i - 1 + poly.vertices.length) % poly.vertices.length];
                 const nextIdx = poly.vertices[(i + 1) % poly.vertices.length];
-                
-                // Vertex is part of two polygon edges
-                vertexEdges.get(vIdx).push({ 
-                    segIdx: -polyIdx - 1,
-                    start: prevIdx,
-                    end: vIdx,
-                    isPolygon: true
-                });
-                vertexEdges.get(vIdx).push({ 
-                    segIdx: -polyIdx - 1,
-                    start: vIdx,
-                    end: nextIdx,
-                    isPolygon: true
-                });
+                addConnectedEdges(prevIdx, vIdx, true, -polyIdx - 1);
+                addConnectedEdges(vIdx, nextIdx, true, -polyIdx - 1);
             }
         }
     });
     
-    // For each vertex, find its closest edge distance
+    // Find vertices with edges at minimum distance
     const vertexClosestEdgeDist = new Map();
     let globalClosestEdgeDist = Infinity;
     
     for (const [vIdx, edges] of vertexEdges) {
-        if (edges.length === 0) {
-            // Vertex not connected to any edge - use large distance
-            vertexClosestEdgeDist.set(vIdx, Infinity);
-            continue;
-        }
-        
-        // Find the closest edge for this vertex
-        let closestDist = Infinity;
-        for (const edgeInfo of edges) {
-            const p1 = sketch.points[edgeInfo.start];
-            const p2 = sketch.points[edgeInfo.end];
-            const dist = distanceToSegment(mmX, mmY, p1, p2);
-            if (dist < closestDist) {
-                closestDist = dist;
-            }
-        }
-        
+        const closestDist = edges.length === 0 ? Infinity : 
+            Math.min(...edges.map(e => distanceToSegment(mmX, mmY, sketch.points[e.start], sketch.points[e.end])));
         vertexClosestEdgeDist.set(vIdx, closestDist);
-        
-        // Track global minimum
-        if (closestDist < globalClosestEdgeDist) {
-            globalClosestEdgeDist = closestDist;
-        }
+        globalClosestEdgeDist = Math.min(globalClosestEdgeDist, closestDist);
     }
     
     if (globalClosestEdgeDist === Infinity) {
-        // No edges found - return all vertices in closest group
         moveClosestEdge = null;
+        moveClosestEdges = [];
+        moveConstraintAxis = null;
         updateCanvasCursor();
         return closestGroup.pointIndices;
     }
     
-    // Collect ALL edges at the minimum distance for highlighting
-    // and find which vertices to select
-    const closestEdges = [];
+    // Collect vertices to select and edges for highlighting
     const selectedVertices = [];
+    const closestEdges = [];
+    const selectedEdgeKeys = new Set();
     
     for (const vIdx of closestGroup.pointIndices) {
-        const dist = vertexClosestEdgeDist.get(vIdx);
-        if (dist === globalClosestEdgeDist) {
+        if (vertexClosestEdgeDist.get(vIdx) === globalClosestEdgeDist) {
             selectedVertices.push(vIdx);
-            // Add all edges for this vertex that are at the minimum distance
             for (const edgeInfo of vertexEdges.get(vIdx)) {
-                const p1 = sketch.points[edgeInfo.start];
-                const p2 = sketch.points[edgeInfo.end];
-                const edgeDist = distanceToSegment(mmX, mmY, p1, p2);
-                if (Math.abs(edgeDist - globalClosestEdgeDist) < 0.001) {
-                    // Check if this edge is already in the list
-                    const edgeKey = `${edgeInfo.start},${edgeInfo.end}`;
-                    const key2 = `${edgeInfo.end},${edgeInfo.start}`; // Reverse direction
-                    const alreadyAdded = closestEdges.some(e => 
-                        `${e.start},${e.end}` === edgeKey || `${e.start},${e.end}` === key2
-                    );
-                    if (!alreadyAdded) {
-                        closestEdges.push(edgeInfo);
-                    }
+                const edgeKey = `${edgeInfo.start},${edgeInfo.end}`;
+                const key2 = `${edgeInfo.end},${edgeInfo.start}`;
+                if (!selectedEdgeKeys.has(edgeKey) && !selectedEdgeKeys.has(key2) && 
+                    Math.abs(distanceToSegment(mmX, mmY, sketch.points[edgeInfo.start], sketch.points[edgeInfo.end]) - globalClosestEdgeDist) < 0.001) {
+                    closestEdges.push(edgeInfo);
+                    selectedEdgeKeys.add(edgeKey);
                 }
             }
         }
     }
     
-    // Store all closest edges for highlighting (use first one or all)
     moveClosestEdge = closestEdges.length > 0 ? closestEdges[0] : null;
-    // Actually, let's store all of them in a new variable
     moveClosestEdges = closestEdges;
-    
     updateCanvasCursor();
+    
     return selectedVertices;
 }
 
@@ -1098,8 +1018,17 @@ function handleVertexMoveInput(type, mm) {
             
             // Calculate offset from the RAW drag start position to snapped current position
             // This allows vertices created on finer grids to snap properly to coarser grids
-            const dx = snappedMM.x - dragStartMM.x;
-            const dy = snappedMM.y - dragStartMM.y;
+            let dx = snappedMM.x - dragStartMM.x;
+            let dy = snappedMM.y - dragStartMM.y;
+            
+            // Apply constraint if set (for ortho connector movement)
+            if (moveConstraintAxis === 'x') {
+                // Constrain to horizontal movement only (x-axis)
+                dy = 0;
+            } else if (moveConstraintAxis === 'y') {
+                // Constrain to vertical movement only (y-axis)
+                dx = 0;
+            }
             
             // Move all candidate vertices from their original positions by the offset
             // Then snap to grid to ensure vertices land exactly on grid points
@@ -1112,6 +1041,30 @@ function handleVertexMoveInput(type, mm) {
                     y: Math.round(newY / gridSpacing) * gridSpacing
                 };
             });
+            
+            // If we moved ortho junction points, update the stored bend coordinate
+            if (moveConstraintAxis && moveVertexCandidates.length === 2) {
+                const idx1 = moveVertexCandidates[0];
+                const idx2 = moveVertexCandidates[1];
+                const ol = getOrthoLineByPoint(idx1);
+                if (ol && ol.seg2 !== undefined) {
+                    // Get the segment for this connector
+                    const seg = sketch.segments[ol.seg2];
+                    if (seg) {
+                        const p1 = sketch.points[seg.start];
+                        const p2 = sketch.points[seg.end];
+                        // Update user bend coordinate based on new positions
+                        // This remembers the user's manual positioning of seg2
+                        if (moveConstraintAxis === 'x') {
+                            // Vertical connector, bend coordinate is x
+                            ol.userBendCoord = p1.x; // or p2.x, they should be the same
+                        } else if (moveConstraintAxis === 'y') {
+                            // Horizontal connector, bend coordinate is y
+                            ol.userBendCoord = p1.y; // or p2.y, they should be the same
+                        }
+                    }
+                }
+            }
             
             // Check for overlapping vertices in all polygons containing moved vertices
             const movedVertexSet = new Set(moveVertexCandidates);
@@ -1132,6 +1085,18 @@ function handleVertexMoveInput(type, mm) {
                     sketch.polygons[i].vertices = removeOverlappingPolygonVertices(poly.vertices);
                 }
             }
+            
+            // Update any orthoLines that have moved endpoints
+            for (const idx of moveVertexCandidates) {
+                const orthoLines = getOrthoLinesForEndpoint(idx);
+                for (const ol of orthoLines) {
+                    updateOrthoLine(ol);
+                }
+            }
+            
+            // Clean up any zero-length segments created by orthoLine updates
+            // Note: zero-length segments belonging to orthoLines are preserved
+            cleanupZeroLengthSegments();
             
             drawCanvas();
         } else {
@@ -1231,6 +1196,7 @@ function clearSketch() {
     sketch.points = [];
     sketch.segments = [];
     sketch.polygons = [];
+    sketch.orthoLines = [];
     isDrawing = false;
     previewPoint = null;
     startPointIndex = null;
@@ -1242,13 +1208,18 @@ function clearSketch() {
     isDrawingRectangle = false;
     rectangleStartIndex = null;
     rectangleAddedPoints = [];
+    isDrawingOrthogonal = false;
+    orthoStartIndex = null;
+    orthoAddedPoints = [];
     polygonDeletionCandidates = [];
     deletionCandidates = [];
     moveVertexCandidates = [];
     moveClosestEdge = null;
     moveClosestEdges = [];
+    moveConstraintAxis = null;
     window.polygonBeforeState = null; // Clean up saved state
     window.rectangleBeforeState = null; // Clean up saved state
+    window.orthoBeforeState = null; // Clean up saved state
     
     // Update cursor
     updateCanvasCursor();
@@ -1290,6 +1261,384 @@ function getSketchStats() {
         segmentCount: sketch.segments.length,
         polygonCount: sketch.polygons.length
     };
+}
+
+// ============================================
+// ORTHOGONAL LINE HELPERS
+// ============================================
+
+/**
+ * Check if a point lies on an existing segment or polygon edge
+ * @param {Object} point - The point to check {x, y}
+ * @param {number} excludeSeg1 - Optional segment index to exclude from check
+ * @param {number} excludeSeg2 - Optional second segment index to exclude from check
+ * @returns {Object|null} - Returns {axis: 'x'|'y', coord: number} if point lies on a segment, null otherwise
+ */
+function getConstraintFromExistingGeometry(point, excludeSeg1 = null, excludeSeg2 = null) {
+    const threshold = getAdaptiveGridSpacing() * 0.1; // Small threshold for on-segment detection
+    
+    // Check all segments
+    for (let i = 0; i < sketch.segments.length; i++) {
+        if (i === excludeSeg1 || i === excludeSeg2) continue;
+        
+        const seg = sketch.segments[i];
+        const p1 = sketch.points[seg.start];
+        const p2 = sketch.points[seg.end];
+        
+        const dist = distanceToSegment(point.x, point.y, p1, p2);
+        if (dist < threshold) {
+            // Point lies on this segment, determine its direction
+            if (p1.x === p2.x) {
+                return { axis: 'x', coord: p1.x }; // Vertical segment
+            } else if (p1.y === p2.y) {
+                return { axis: 'y', coord: p1.y }; // Horizontal segment
+            } else {
+                // Diagonal segment - determine primary direction
+                const dx = Math.abs(p2.x - p1.x);
+                const dy = Math.abs(p2.y - p1.y);
+                if (dx > dy) {
+                    return { axis: 'y', coord: point.y }; // Segment is more horizontal, constrain to vertical
+                } else {
+                    return { axis: 'x', coord: point.x }; // Segment is more vertical, constrain to horizontal
+                }
+            }
+        }
+    }
+    
+    // Check polygon edges
+    for (const poly of sketch.polygons) {
+        if (poly.vertices.length < 2) continue;
+        
+        for (let i = 0; i < poly.vertices.length; i++) {
+            const startIdx = poly.vertices[i];
+            const endIdx = poly.vertices[(i + 1) % poly.vertices.length];
+            const p1 = sketch.points[startIdx];
+            const p2 = sketch.points[endIdx];
+            
+            const dist = distanceToSegment(point.x, point.y, p1, p2);
+            if (dist < threshold) {
+                // Point lies on this polygon edge, determine its direction
+                if (p1.x === p2.x) {
+                    return { axis: 'x', coord: p1.x }; // Vertical edge
+                } else if (p1.y === p2.y) {
+                    return { axis: 'y', coord: p1.y }; // Horizontal edge
+                } else {
+                    // Diagonal edge - determine primary direction
+                    const dx = Math.abs(p2.x - p1.x);
+                    const dy = Math.abs(p2.y - p1.y);
+                    if (dx > dy) {
+                        return { axis: 'y', coord: point.y }; // Edge is more horizontal, constrain to vertical
+                    } else {
+                        return { axis: 'x', coord: point.x }; // Edge is more vertical, constrain to horizontal
+                    }
+                }
+            }
+        }
+    }
+    
+    return null; // No constraint found
+}
+
+/**
+ * Calculate the geometry for an orthogonal line between two points
+ * @param {Object} A - Start point {x, y}
+ * @param {Object} B - End point {x, y}
+ * @param {Object|null} ol - OrthoLine object (for excluding its own segments from constraint detection)
+ * @param {number|null} userBendCoord - User-defined bend coordinate, if any
+ * @returns {Object} - Geometry info with isStraight, bendAxis, bendCoord, P, Q
+ */
+function calculateOrthoGeometry(A, B, ol = null, userBendCoord = null) {
+    const minX = Math.min(A.x, B.x);
+    const maxX = Math.max(A.x, B.x);
+    const minY = Math.min(A.y, B.y);
+    const maxY = Math.max(A.y, B.y);
+    const width = maxX - minX;
+    const height = maxY - minY;
+    const gridSpacing = getAdaptiveGridSpacing();
+    
+    // Check if already axis-aligned (straight line)
+    if (A.x === B.x || A.y === B.y) {
+        return {
+            isStraight: true,
+            bendAxis: null,
+            bendCoord: null,
+            P: null,
+            Q: null
+        };
+    }
+    
+    // Determine longer axis
+    let bendAxis, bendCoord, P, Q;
+    
+    if (width >= height) {
+        // Horizontal: arms are horizontal, connector is vertical
+        bendAxis = 'x';
+        // Use user-defined bend coordinate if available and valid
+        if (userBendCoord !== null && userBendCoord >= minX && userBendCoord <= maxX) {
+            bendCoord = Math.round(userBendCoord / gridSpacing) * gridSpacing;
+        } else {
+            // Default to middle
+            bendCoord = Math.round((A.x + B.x) / 2 / gridSpacing) * gridSpacing;
+        }
+        P = { x: bendCoord, y: A.y };
+        Q = { x: bendCoord, y: B.y };
+    } else {
+        // Vertical: arms are vertical, connector is horizontal
+        bendAxis = 'y';
+        // Use user-defined bend coordinate if available and valid
+        if (userBendCoord !== null && userBendCoord >= minY && userBendCoord <= maxY) {
+            bendCoord = Math.round(userBendCoord / gridSpacing) * gridSpacing;
+        } else {
+            // Default to middle
+            bendCoord = Math.round((A.y + B.y) / 2 / gridSpacing) * gridSpacing;
+        }
+        P = { x: A.x, y: bendCoord };
+        Q = { x: B.x, y: bendCoord };
+    }
+    
+    return {
+        isStraight: false,
+        bendAxis,
+        bendCoord,
+        P,
+        Q
+    };
+}
+
+/**
+ * Update an orthogonal line's geometry after its endpoints have moved
+ * @param {Object} ol - The orthoLine object to update
+ */
+function updateOrthoLine(ol) {
+    const A = sketch.points[ol.startPoint];
+    const B = sketch.points[ol.endPoint];
+    const gridSpacing = getAdaptiveGridSpacing();
+    
+    // Recalculate geometry
+    const geometry = calculateOrthoGeometry(A, B, ol, ol.userBendCoord);
+    
+    if (geometry.isStraight) {
+        // Update to straight mode
+        ol.isStraight = true;
+        ol.bendAxis = null;
+        ol.bendCoord = null;
+        
+        // If we previously had junction points and segments, move them to create a straight line
+        if (ol.junction1 !== undefined && ol.junction2 !== undefined) {
+            // Move junction points to create a direct path A-B
+            // Move P to A and Q to B, making segments A-P and Q-B have zero length
+            // This will cause seg2 (P-Q) to become A-B
+            // The zero-length segments will be preserved (not cleaned up) to maintain orthoLine structure
+            sketch.points[ol.junction1] = { ...sketch.points[ol.startPoint], type: 'orthoJunction' };
+            sketch.points[ol.junction2] = { ...sketch.points[ol.endPoint], type: 'orthoJunction' };
+            
+            // Update segments to create A-B directly
+            if (ol.seg1 !== undefined) {
+                sketch.segments[ol.seg1] = { start: ol.startPoint, end: ol.junction1 }; // A-P (P=A)
+            }
+            if (ol.seg2 !== undefined) {
+                sketch.segments[ol.seg2] = { start: ol.junction1, end: ol.junction2 }; // P-Q (P=A, Q=B)
+            }
+            if (ol.seg3 !== undefined) {
+                sketch.segments[ol.seg3] = { start: ol.junction2, end: ol.endPoint }; // Q-B (Q=B)
+            }
+        }
+    } else {
+        // Update bend information
+        ol.bendAxis = geometry.bendAxis;
+        ol.bendCoord = geometry.bendCoord;
+        ol.isStraight = false;
+        
+        // Check if endpoints have moved inward past seg2, in which case reset userBendCoord
+        if (ol.userBendCoord !== null) {
+            if (geometry.bendAxis === 'x') {
+                // Vertical connector (seg2), check if endpoints align with bend coordinate
+                if (A.x === geometry.bendCoord || B.x === geometry.bendCoord) {
+                    // Endpoint has reached seg2, reset user bend coordinate
+                    ol.userBendCoord = null;
+                }
+            } else if (geometry.bendAxis === 'y') {
+                // Horizontal connector (seg2), check if endpoints align with bend coordinate
+                if (A.y === geometry.bendCoord || B.y === geometry.bendCoord) {
+                    // Endpoint has reached seg2, reset user bend coordinate
+                    ol.userBendCoord = null;
+                }
+            }
+        }
+        
+        // Update or create junction points
+        const P = geometry.P;
+        const Q = geometry.Q;
+        
+        if (ol.junction1 === undefined) {
+            // First time creating junctions for this line (was straight, now becoming bendy)
+            // If we had a straight segment (seg1 was A-B), update it to be A-P
+            
+            ol.junction1 = sketch.points.length;
+            sketch.points.push({ ...P, type: 'orthoJunction' });
+            ol.junction2 = sketch.points.length;
+            sketch.points.push({ ...Q, type: 'orthoJunction' });
+            
+            // Update or create segments
+            if (ol.seg1 !== undefined) {
+                // Update existing seg1 from A-B to A-P
+                sketch.segments[ol.seg1] = { start: ol.startPoint, end: ol.junction1 };
+            } else {
+                // Create seg1
+                ol.seg1 = sketch.segments.length;
+                sketch.segments.push({ start: ol.startPoint, end: ol.junction1 });
+            }
+            
+            // Create seg2 (P-Q)
+            ol.seg2 = sketch.segments.length;
+            sketch.segments.push({ start: ol.junction1, end: ol.junction2 });
+            
+            // Create seg3 (Q-B)
+            ol.seg3 = sketch.segments.length;
+            sketch.segments.push({ start: ol.junction2, end: ol.endPoint });
+        } else {
+            // Update existing junction points
+            sketch.points[ol.junction1] = { ...P, type: 'orthoJunction' };
+            sketch.points[ol.junction2] = { ...Q, type: 'orthoJunction' };
+        }
+    }
+}
+
+/**
+ * Get orthoLine by segment index
+ * @param {number} segIndex - Segment index
+ * @returns {Object|null} - The orthoLine or null if not found
+ */
+function getOrthoLineBySegment(segIndex) {
+    for (const ol of sketch.orthoLines) {
+        if (ol.seg1 === segIndex || ol.seg2 === segIndex || ol.seg3 === segIndex) {
+            return ol;
+        }
+    }
+    return null;
+}
+
+/**
+ * Get orthoLine by point index (endpoint or junction)
+ * @param {number} pointIndex - Point index
+ * @returns {Object|null} - The orthoLine or null if not found
+ */
+function getOrthoLineByPoint(pointIndex) {
+    for (const ol of sketch.orthoLines) {
+        if (ol.startPoint === pointIndex || 
+            ol.endPoint === pointIndex || 
+            ol.junction1 === pointIndex || 
+            ol.junction2 === pointIndex) {
+            return ol;
+        }
+    }
+    return null;
+}
+
+/**
+ * Get all orthoLines that have a specific point as an endpoint
+ * @param {number} pointIndex - Point index
+ * @returns {Array} - Array of orthoLine objects
+ */
+function getOrthoLinesForEndpoint(pointIndex) {
+    return sketch.orthoLines.filter(ol => 
+        ol.startPoint === pointIndex || ol.endPoint === pointIndex
+    );
+}
+
+/**
+ * Check if a point is an ortho junction
+ * @param {number} pointIndex - Point index
+ * @returns {boolean}
+ */
+function isOrthoJunction(pointIndex) {
+    if (pointIndex === undefined || pointIndex >= sketch.points.length) return false;
+    return sketch.points[pointIndex].type === 'orthoJunction';
+}
+
+/**
+ * Check if a segment is part of an orthoLine's connector (seg2)
+ * @param {number} segIndex - Segment index
+ * @returns {boolean}
+ */
+function isOrthoConnectorSegment(segIndex) {
+    const ol = getOrthoLineBySegment(segIndex);
+    return ol !== null && ol.seg2 === segIndex;
+}
+
+/**
+ * Get the constraint axis for an orthoLine connector segment
+ * @param {number} segIndex - Segment index
+ * @returns {'x' | 'y' | null} - Constraint axis or null
+ */
+function getOrthoConnectorConstraint(segIndex) {
+    const ol = getOrthoLineBySegment(segIndex);
+    if (ol && ol.seg2 === segIndex) {
+        return ol.bendAxis; // 'x' for horizontal movement, 'y' for vertical movement
+    }
+    return null;
+}
+
+/**
+ * Remove orphaned points added during orthogonal line drawing
+ */
+function removeOrthogonalOrphanedPoints() {
+    if (orthoAddedPoints.length === 0) return;
+    
+    const indicesToDelete = new Set(orthoAddedPoints);
+    
+    // Find all point indices that are still referenced
+    const usedPointIndices = new Set();
+    sketch.segments.forEach(seg => {
+        usedPointIndices.add(seg.start);
+        usedPointIndices.add(seg.end);
+    });
+    sketch.polygons.forEach(poly => {
+        poly.vertices.forEach(vIdx => usedPointIndices.add(vIdx));
+    });
+    sketch.orthoLines.forEach(ol => {
+        if (ol.startPoint !== undefined) usedPointIndices.add(ol.startPoint);
+        if (ol.endPoint !== undefined) usedPointIndices.add(ol.endPoint);
+        if (ol.junction1 !== undefined) usedPointIndices.add(ol.junction1);
+        if (ol.junction2 !== undefined) usedPointIndices.add(ol.junction2);
+    });
+    
+    // Only keep points that are still referenced
+    const usedPoints = [];
+    const pointMap = new Map();
+    let newIndex = 0;
+    
+    sketch.points.forEach((p, oldIndex) => {
+        if (usedPointIndices.has(oldIndex) || !indicesToDelete.has(oldIndex)) {
+            pointMap.set(oldIndex, newIndex);
+            usedPoints.push(p);
+            newIndex++;
+        }
+    });
+    
+    sketch.points = usedPoints;
+    
+    // Remap segment indices
+    sketch.segments.forEach(seg => {
+        seg.start = pointMap.get(seg.start);
+        seg.end = pointMap.get(seg.end);
+    });
+    
+    // Remap polygon vertex indices
+    sketch.polygons.forEach(poly => {
+        poly.vertices = poly.vertices.map(vIdx => pointMap.get(vIdx));
+    });
+    
+    // Remap orthoLine point indices
+    sketch.orthoLines.forEach(ol => {
+        if (ol.startPoint !== undefined) ol.startPoint = pointMap.get(ol.startPoint);
+        if (ol.endPoint !== undefined) ol.endPoint = pointMap.get(ol.endPoint);
+        if (ol.junction1 !== undefined) ol.junction1 = pointMap.get(ol.junction1);
+        if (ol.junction2 !== undefined) ol.junction2 = pointMap.get(ol.junction2);
+    });
+    
+    // Clear the tracking array
+    orthoAddedPoints = [];
 }
 
 // ============================================
@@ -1438,9 +1787,12 @@ function drawSketch() {
         ctx.lineWidth = 2;
     }
     
-    // Draw points
+    // Draw points (skip orthoJunction points)
     ctx.fillStyle = '#4a90e2';
     sketch.points.forEach(p => {
+        // Skip orthoJunction points - they're internal and shouldn't be visible
+        if (p.type === 'orthoJunction') return;
+        
         const pixel = mmToPixel(p.x, p.y);
         ctx.beginPath();
         ctx.arc(pixel.x, pixel.y, 3, 0, Math.PI * 2);
@@ -1597,6 +1949,85 @@ function drawPreview() {
             ctx.fill();
         }
     }
+    
+    // Draw orthogonal tool preview
+    if (currentTool === 'orthogonal' && isDrawingOrthogonal && orthoStartIndex !== null) {
+        const startPt = sketch.points[orthoStartIndex];
+        const startPixel = mmToPixel(startPt.x, startPt.y);
+        
+        if (previewPoint) {
+            const geometry = calculateOrthoGeometry(startPt, previewPoint, null);
+            
+            if (geometry.isStraight) {
+                // Draw straight line preview
+                const previewPixel = mmToPixel(previewPoint.x, previewPoint.y);
+                ctx.strokeStyle = '#0066cc';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([4, 4]);
+                ctx.beginPath();
+                ctx.moveTo(startPixel.x, startPixel.y);
+                ctx.lineTo(previewPixel.x, previewPixel.y);
+                ctx.stroke();
+                ctx.setLineDash([]);
+                
+                // Draw preview end point
+                ctx.fillStyle = '#0066cc';
+                ctx.beginPath();
+                ctx.arc(previewPixel.x, previewPixel.y, 3, 0, Math.PI * 2);
+                ctx.fill();
+            } else {
+                // Draw 3-segment orthogonal path preview
+                const pPx = mmToPixel(geometry.P.x, geometry.P.y);
+                const qPx = mmToPixel(geometry.Q.x, geometry.Q.y);
+                const previewPixel = mmToPixel(previewPoint.x, previewPoint.y);
+                
+                ctx.strokeStyle = '#0066cc';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([4, 4]);
+                
+                // Draw A-P
+                ctx.beginPath();
+                ctx.moveTo(startPixel.x, startPixel.y);
+                ctx.lineTo(pPx.x, pPx.y);
+                ctx.stroke();
+                
+                // Draw P-Q
+                ctx.beginPath();
+                ctx.moveTo(pPx.x, pPx.y);
+                ctx.lineTo(qPx.x, qPx.y);
+                ctx.stroke();
+                
+                // Draw Q-B
+                ctx.beginPath();
+                ctx.moveTo(qPx.x, qPx.y);
+                ctx.lineTo(previewPixel.x, previewPixel.y);
+                ctx.stroke();
+                
+                ctx.setLineDash([]);
+                
+                // Draw preview junction points (smaller, semi-transparent)
+                ctx.fillStyle = 'rgba(0, 102, 204, 0.5)';
+                ctx.beginPath();
+                ctx.arc(pPx.x, pPx.y, 2, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(qPx.x, qPx.y, 2, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Draw preview end point
+                ctx.fillStyle = '#0066cc';
+                ctx.beginPath();
+                ctx.arc(previewPixel.x, previewPixel.y, 3, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        } else {
+            // Highlight the start point
+            ctx.fillStyle = '#0066cc';
+            ctx.beginPath();
+            ctx.arc(startPixel.x, startPixel.y, 4, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
 }
 
 function drawCanvas() {
@@ -1742,6 +2173,113 @@ function handleRectangleInput(type, snappedMM) {
 }
 
 // ============================================
+// ORTHOGONAL LINE INPUT HANDLING
+// ============================================
+
+/**
+ * Handle orthogonal line drawing input
+ * @param {string} type - 'down', 'move', or 'up'
+ * @param {Object} snappedMM - {x, y} snapped to grid/existing points
+ */
+function handleOrthogonalInput(type, snappedMM) {
+    if (type === 'down') {
+        // Save state before adding any points for this orthogonal line
+        const orthoBeforeState = saveStateForUndo();
+        
+        if (!isDrawingOrthogonal) {
+            // Start a new orthogonal line
+            orthoAddedPoints = []; // Reset tracking for new orthogonal line
+            
+            // ALWAYS create a new point, even when snapping to existing ones
+            // This allows independent vertex movement in the move tool
+            orthoStartIndex = sketch.points.length;
+            sketch.points.push({ x: snappedMM.x, y: snappedMM.y });
+            orthoAddedPoints.push(orthoStartIndex);
+            isDrawingOrthogonal = true;
+            previewPoint = null; // Reset preview point for new orthogonal line
+            
+            // Store the before state in a window variable for later use
+            window.orthoBeforeState = orthoBeforeState;
+            
+            drawCanvas();
+        } else {
+            // Second click: complete the orthogonal line
+            const startPt = sketch.points[orthoStartIndex];
+            const endPointIndex = sketch.points.length;
+            sketch.points.push({ x: snappedMM.x, y: snappedMM.y });
+            orthoAddedPoints.push(endPointIndex);
+            
+            // Calculate geometry
+            const geometry = calculateOrthoGeometry(startPt, snappedMM, null);
+            
+            // Create the orthoLine object
+            const orthoLine = {
+                startPoint: orthoStartIndex,
+                endPoint: endPointIndex,
+                isStraight: geometry.isStraight,
+                bendAxis: geometry.bendAxis,
+                bendCoord: geometry.bendCoord,
+                userBendCoord: null  // null means use calculated bendCoord, otherwise use this user-defined value
+            };
+            
+            if (!geometry.isStraight) {
+                // Create junction points and segments for non-straight lines
+                const P = geometry.P;
+                const Q = geometry.Q;
+                
+                orthoLine.junction1 = sketch.points.length;
+                sketch.points.push({ ...P, type: 'orthoJunction' });
+                orthoAddedPoints.push(orthoLine.junction1);
+                
+                orthoLine.junction2 = sketch.points.length;
+                sketch.points.push({ ...Q, type: 'orthoJunction' });
+                orthoAddedPoints.push(orthoLine.junction2);
+                
+                // Create segments
+                orthoLine.seg1 = sketch.segments.length;
+                sketch.segments.push({ start: orthoStartIndex, end: orthoLine.junction1 });
+                
+                orthoLine.seg2 = sketch.segments.length;
+                sketch.segments.push({ start: orthoLine.junction1, end: orthoLine.junction2 });
+                
+                orthoLine.seg3 = sketch.segments.length;
+                sketch.segments.push({ start: orthoLine.junction2, end: endPointIndex });
+            } else {
+                // For straight lines, create a single segment
+                orthoLine.seg1 = sketch.segments.length;
+                sketch.segments.push({ start: orthoStartIndex, end: endPointIndex });
+                orthoLine.seg2 = undefined;
+                orthoLine.seg3 = undefined;
+            }
+            
+            // Add to orthoLines array
+            sketch.orthoLines.push(orthoLine);
+            
+            // Record the action for undo
+            if (window.orthoBeforeState) {
+                recordSimpleAction(window.orthoBeforeState);
+                window.orthoBeforeState = null;
+            }
+            
+            // Reset orthogonal drawing state
+            isDrawingOrthogonal = false;
+            orthoStartIndex = null;
+            orthoAddedPoints = [];
+            previewPoint = null;
+            
+            drawCanvas();
+            updateStatus();
+        }
+    } else if (type === 'move') {
+        if (isDrawingOrthogonal) {
+            // Update preview point for cursor tracking
+            previewPoint = snappedMM;
+            drawCanvas();
+        }
+    }
+}
+
+// ============================================
 // INPUT HANDLING
 // ============================================
 
@@ -1802,6 +2340,12 @@ function handleCanvasInput(type, mouseX, mouseY) {
     if (currentTool === 'move') {
         handleVertexMoveInput(type, mm);
         return; // Move tool handles everything, no fall through
+    }
+    
+    // Orthogonal line drawing logic
+    if (currentTool === 'orthogonal') {
+        handleOrthogonalInput(type, snappedMM);
+        return;
     }
     
     // Line drawing logic
@@ -2144,6 +2688,23 @@ function initSketchCanvas() {
                 e.preventDefault();
             }
         }
+        
+        // Orthogonal tool keyboard shortcuts
+        if (currentTool === 'orthogonal') {
+            if (e.code === 'Escape') {
+                // Cancel orthogonal line drawing
+                if (isDrawingOrthogonal) {
+                    isDrawingOrthogonal = false;
+                    orthoStartIndex = null;
+                    previewPoint = null;
+                    window.orthoBeforeState = null; // Clean up saved state
+                    removeOrthogonalOrphanedPoints();
+                    drawCanvas();
+                    updateStatus();
+                }
+                e.preventDefault();
+            }
+        }
     });
     
     window.addEventListener('keyup', (e) => {
@@ -2236,6 +2797,15 @@ function initSketchCanvas() {
             removeRectangleOrphanedPoints();
             drawCanvas();
         }
+        if (isDrawingOrthogonal) {
+            // Cancel orthogonal drawing on mouse leave
+            isDrawingOrthogonal = false;
+            orthoStartIndex = null;
+            previewPoint = null;
+            window.orthoBeforeState = null; // Clean up saved state
+            removeOrthogonalOrphanedPoints();
+            drawCanvas();
+        }
         if (isPanning) {
             isPanning = false;
         }
@@ -2312,9 +2882,22 @@ function saveStateForUndo() {
     if (isUndoing) return null;
     
     return {
-        points: sketch.points.map(p => ({ x: p.x, y: p.y })),
+        points: sketch.points.map(p => ({ x: p.x, y: p.y, type: p.type })),
         segments: sketch.segments.map(seg => ({ start: seg.start, end: seg.end })),
-        polygons: sketch.polygons.map(poly => ({ vertices: poly.vertices.slice() }))
+        polygons: sketch.polygons.map(poly => ({ vertices: poly.vertices.slice() })),
+        orthoLines: sketch.orthoLines.map(ol => ({
+            startPoint: ol.startPoint,
+            endPoint: ol.endPoint,
+            junction1: ol.junction1,
+            junction2: ol.junction2,
+            seg1: ol.seg1,
+            seg2: ol.seg2,
+            seg3: ol.seg3,
+            bendAxis: ol.bendAxis,
+            bendCoord: ol.bendCoord,
+            userBendCoord: ol.userBendCoord,
+            isStraight: ol.isStraight
+        }))
     };
 }
 
@@ -2322,14 +2905,28 @@ function saveStateForUndo() {
  * Restore sketch state from saved state
  */
 function restoreState(state) {
-    sketch.points = state.points.map(p => ({ x: p.x, y: p.y }));
+    sketch.points = state.points.map(p => ({ x: p.x, y: p.y, type: p.type }));
     sketch.segments = state.segments.map(seg => ({ start: seg.start, end: seg.end }));
     sketch.polygons = state.polygons.map(poly => ({ vertices: poly.vertices.slice() }));
+    sketch.orthoLines = state.orthoLines ? state.orthoLines.map(ol => ({
+        startPoint: ol.startPoint,
+        endPoint: ol.endPoint,
+        junction1: ol.junction1,
+        junction2: ol.junction2,
+        seg1: ol.seg1,
+        seg2: ol.seg2,
+        seg3: ol.seg3,
+        bendAxis: ol.bendAxis,
+        bendCoord: ol.bendCoord,
+        userBendCoord: ol.userBendCoord,
+        isStraight: ol.isStraight
+    })) : [];
     
     // Clear move vertex candidates to prevent stale highlights
     moveVertexCandidates = [];
     moveClosestEdge = null;
     moveClosestEdges = [];
+    moveConstraintAxis = null;
     
     // Clear deletion candidates to prevent stale highlights
     deletionCandidates = [];
@@ -2440,26 +3037,52 @@ function canRedo() {
 
 /**
  * Export current sketch state as a plain object for serialization
- * Returns {points, segments, polygons} with plain arrays/objects
+ * Returns {points, segments, polygons, orthoLines} with plain arrays/objects
  */
 function exportSketchState() {
     return {
-        points: sketch.points.map(p => ({ x: p.x, y: p.y })),
+        points: sketch.points.map(p => ({ x: p.x, y: p.y, type: p.type })),
         segments: sketch.segments.map(seg => ({ start: seg.start, end: seg.end })),
-        polygons: sketch.polygons.map(poly => ({ vertices: poly.vertices.slice() }))
+        polygons: sketch.polygons.map(poly => ({ vertices: poly.vertices.slice() })),
+        orthoLines: sketch.orthoLines.map(ol => ({
+            startPoint: ol.startPoint,
+            endPoint: ol.endPoint,
+            junction1: ol.junction1,
+            junction2: ol.junction2,
+            seg1: ol.seg1,
+            seg2: ol.seg2,
+            seg3: ol.seg3,
+            bendAxis: ol.bendAxis,
+            bendCoord: ol.bendCoord,
+            userBendCoord: ol.userBendCoord,
+            isStraight: ol.isStraight
+        }))
     };
 }
 
 /**
  * Import sketch state from a plain object
- * Restores points, segments, polygons and clears undo/redo stacks
+ * Restores points, segments, polygons, orthoLines and clears undo/redo stacks
  */
 function importSketchState(state) {
     if (!state) return;
     
-    sketch.points = state.points ? state.points.map(p => ({ x: p.x, y: p.y })) : [];
+    sketch.points = state.points ? state.points.map(p => ({ x: p.x, y: p.y, type: p.type })) : [];
     sketch.segments = state.segments ? state.segments.map(seg => ({ start: seg.start, end: seg.end })) : [];
     sketch.polygons = state.polygons ? state.polygons.map(poly => ({ vertices: poly.vertices.slice() })) : [];
+    sketch.orthoLines = state.orthoLines ? state.orthoLines.map(ol => ({
+        startPoint: ol.startPoint,
+        endPoint: ol.endPoint,
+        junction1: ol.junction1,
+        junction2: ol.junction2,
+        seg1: ol.seg1,
+        seg2: ol.seg2,
+        seg3: ol.seg3,
+        bendAxis: ol.bendAxis,
+        bendCoord: ol.bendCoord,
+        userBendCoord: ol.userBendCoord,
+        isStraight: ol.isStraight
+    })) : [];
     
     // Clear all drawing states
     isDrawing = false;
@@ -2475,11 +3098,16 @@ function importSketchState(state) {
     rectangleStartIndex = null;
     window.rectangleBeforeState = null; // Clean up saved state
     rectangleAddedPoints = [];
+    isDrawingOrthogonal = false;
+    orthoStartIndex = null;
+    window.orthoBeforeState = null; // Clean up saved state
+    orthoAddedPoints = [];
     
     // Clear selection states
     moveVertexCandidates = [];
     moveClosestEdge = null;
     moveClosestEdges = [];
+    moveConstraintAxis = null;
     deletionCandidates = [];
     polygonDeletionCandidates = [];
     
