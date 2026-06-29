@@ -22,8 +22,8 @@ function findVerticesOnEdge(edgeStart, edgeEnd) {
         // Check if line start point is on this edge
         const distStartToEdge = distanceToSegment(lineStart.x, lineStart.y, edgeStartPt, edgeEndPt);
         if (distStartToEdge < threshold) {
-            // Make sure this vertex isn't already one of the edge endpoints
-            if (seg.start !== edgeStart && seg.start !== edgeEnd && !verticesOnEdge.includes(seg.start)) {
+            // Make sure this vertex isn't already one of the edge endpoints and isn't an ortho junction
+            if (seg.start !== edgeStart && seg.start !== edgeEnd && !verticesOnEdge.includes(seg.start) && !isOrthoJunction(seg.start)) {
                 verticesOnEdge.push(seg.start);
             }
         }
@@ -31,8 +31,8 @@ function findVerticesOnEdge(edgeStart, edgeEnd) {
         // Check if line end point is on this edge
         const distEndToEdge = distanceToSegment(lineEnd.x, lineEnd.y, edgeStartPt, edgeEndPt);
         if (distEndToEdge < threshold) {
-            // Make sure this vertex isn't already one of the edge endpoints
-            if (seg.end !== edgeStart && seg.end !== edgeEnd && !verticesOnEdge.includes(seg.end)) {
+            // Make sure this vertex isn't already one of the edge endpoints and isn't an ortho junction
+            if (seg.end !== edgeStart && seg.end !== edgeEnd && !verticesOnEdge.includes(seg.end) && !isOrthoJunction(seg.end)) {
                 verticesOnEdge.push(seg.end);
             }
         }
@@ -63,8 +63,8 @@ function findVerticesOnPolygonPerimeter(poly) {
             // Check if line start point is on this polygon edge
             const distStartToEdge = distanceToSegment(lineStart.x, lineStart.y, polyStart, polyEnd);
             if (distStartToEdge < threshold) {
-                // Make sure this vertex isn't already a polygon vertex
-                if (!poly.vertices.includes(seg.start) && !verticesOnPerimeter.includes(seg.start)) {
+                // Make sure this vertex isn't already a polygon vertex and isn't an ortho junction
+                if (!poly.vertices.includes(seg.start) && !verticesOnPerimeter.includes(seg.start) && !isOrthoJunction(seg.start)) {
                     verticesOnPerimeter.push(seg.start);
                 }
             }
@@ -72,8 +72,8 @@ function findVerticesOnPolygonPerimeter(poly) {
             // Check if line end point is on this polygon edge
             const distEndToEdge = distanceToSegment(lineEnd.x, lineEnd.y, polyStart, polyEnd);
             if (distEndToEdge < threshold) {
-                // Make sure this vertex isn't already a polygon vertex
-                if (!poly.vertices.includes(seg.end) && !verticesOnPerimeter.includes(seg.end)) {
+                // Make sure this vertex isn't already a polygon vertex and isn't an ortho junction
+                if (!poly.vertices.includes(seg.end) && !verticesOnPerimeter.includes(seg.end) && !isOrthoJunction(seg.end)) {
                     verticesOnPerimeter.push(seg.end);
                 }
             }
@@ -338,9 +338,13 @@ function handleVertexMoveInput(type, mm) {
             moveVertexCandidates.forEach(idx => {
                 const newX = dragOriginalPositions.get(idx).x + dx;
                 const newY = dragOriginalPositions.get(idx).y + dy;
+                const snappedX = Math.round(newX / gridSpacing) * gridSpacing;
+                const snappedY = Math.round(newY / gridSpacing) * gridSpacing;
+                // Preserve the original point's type and other properties
                 sketch.points[idx] = {
-                    x: Math.round(newX / gridSpacing) * gridSpacing,
-                    y: Math.round(newY / gridSpacing) * gridSpacing
+                    ...sketch.points[idx],
+                    x: snappedX,
+                    y: snappedY
                 };
             });
             

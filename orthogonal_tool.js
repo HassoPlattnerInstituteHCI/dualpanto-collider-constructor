@@ -132,7 +132,7 @@ function calculateOrthoGeometry(A, B, ol = null, userBendCoord = null, useStored
         if (bendAxis === 'x') {
             // Arms are horizontal, connector is vertical
             // Use user-defined bend coordinate if available and valid, but only if both arms agree
-            if (userBendCoord !== null && userBendCoord >= minX && userBendCoord <= maxX) {
+            if (userBendCoord !== null && userBendCoord >= minX + getAdaptiveGridSpacing() && userBendCoord <= maxX - getAdaptiveGridSpacing()) {
                 bendCoord = Math.round(userBendCoord / gridSpacing) * gridSpacing;
             } else {
                 // Default to middle
