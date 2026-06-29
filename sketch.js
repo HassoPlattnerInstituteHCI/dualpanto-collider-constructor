@@ -1420,7 +1420,7 @@ function drawSketch() {
     // Draw closest edge(s) in bold for move tool
     if (currentTool === 'move' && moveClosestEdges.length > 0) {
         ctx.strokeStyle = '#ffa500';  // Orange to match vertex highlight
-        ctx.lineWidth = 4;  // Bold line
+        ctx.lineWidth = 3;  // Bold line
         
         moveClosestEdges.forEach(edgeInfo => {
             const p1 = sketch.points[edgeInfo.start];
