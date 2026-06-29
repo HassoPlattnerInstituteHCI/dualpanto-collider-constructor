@@ -25,8 +25,8 @@ let gridGranularity = 0.2; // 0.1-2.0 range, 0.2 is the preferred default
 // Viewport state
 const viewport = {
     offsetX: 0,        // mm at center of canvas
-    offsetY: -90,      // mm at center of canvas (10cm upwards)
-    scale: 3,         // pixels per mm (50% more zoom than default of 2)
+    offsetY: -85,      // mm at center of canvas
+    scale: 4,         // pixels per mm
     panX: 0,          // panning offset in pixels
     panY: 0           // panning offset in pixels
 };
@@ -142,8 +142,8 @@ function getCurrentGridInfo() {
  */
 function resetViewport() {
     viewport.offsetX = 0;
-    viewport.offsetY = -90; // 10cm upwards
-    viewport.scale = 3; // 50% more zoom (was 2)
+    viewport.offsetY = -85;
+    viewport.scale = 4;
     viewport.panX = 0;
     viewport.panY = 0;
     drawCanvas();

@@ -91,13 +91,10 @@
     </div>
 
     <div class="status-bar">
-        <span id="sketchNameIndicator"></span>
-        <span id="pointCount">Points: 0</span> |
-        <span id="segmentCount">Segments: 0</span> |
-        <span id="gridSize">Grid: 1.0mm/10.0mm</span> |
-        <span id="statusMessage">Ready</span>
-        <button id="helpBtn" class="help-btn" title="Show Help">?</button>
+        <span id="gridSize">Grid: 1.0mm/10.0mm</span>
     </div>
+    
+    <button id="helpBtn" class="help-btn floating" title="Show Help">?</button>
 
     <!-- Help Modal -->
     <div id="helpModal" class="help-modal-overlay" hidden>
@@ -105,10 +102,10 @@
             <h3>Quick Help</h3>
             <ul>
                 <li><strong>H</strong> - Hallway Tool: Click to start, click again to end a hallway</li>
-                <li><strong>O</strong> - Orthogonal Tool: Click to start, click again to end an orthogonal line with 90° bends</li>
+                <li><strong>O</strong> - Orthogonal Hallway Tool: Click to start, click again to end an orthogonal hallway with 90° bends</li>
                 <li><strong>P</strong> - Room Tool: Click to add vertices, close the polygon to create a room</li>
                 <li><strong>R</strong> - Rectangular Room Tool: Click to create corner, click again to create opposite corner</li>
-                <li><strong>M</strong> - Move Tool: Hover to select, then click and drag to move. You can select polygons, edges, or individual vertices</li>
+                <li><strong>M</strong> - Move Tool: Hover to select, then click and drag to move. You can select polygons, edges, or individual vertices.</li>
                 <li><strong>D</strong> - Delete Tool: Click on hallways or rooms to delete them</li>
                 <li><strong>Alt/Opt</strong> + Click: Delete mode (temporary)</li>
                 <li><strong>Shift</strong> + Drag: Pan the view</li>
@@ -117,7 +114,6 @@
                 <li><strong>Ctrl+Y</strong>: Redo</li>
                 <li><strong>Escape</strong>: Cancel current action</li>
             </ul>
-            <button id="helpCloseBtn" class="help-close-btn">Close</button>
         </div>
     </div>
 

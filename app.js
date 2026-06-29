@@ -243,10 +243,7 @@ function updateDirtyState() {
     const wasDirty = isSketchDirty;
     isSketchDirty = checkSketchDirty();
     
-    // If dirty state changed, update UI
-    if (wasDirty !== isSketchDirty) {
-        updateSketchNameIndicator();
-    }
+
     
     return isSketchDirty;
 }
@@ -257,7 +254,6 @@ function updateDirtyState() {
 function markSketchClean() {
     lastSavedState = exportSketchState();
     isSketchDirty = false;
-    updateSketchNameIndicator();
 }
 
 /**
@@ -265,27 +261,6 @@ function markSketchClean() {
  */
 function markSketchDirty() {
     isSketchDirty = true;
-    updateSketchNameIndicator();
-}
-
-/**
- * Update the sketch name indicator in the UI
- */
-function updateSketchNameIndicator() {
-    const indicator = document.getElementById('sketchNameIndicator');
-    if (!indicator) return;
-    
-    if (currentSketchFile) {
-        indicator.textContent = `Sketch: ${currentSketchFile}`;
-        if (isSketchDirty) {
-            indicator.classList.add('dirty');
-        } else {
-            indicator.classList.remove('dirty');
-        }
-    } else {
-        indicator.textContent = isSketchDirty ? 'New Sketch (*)' : 'New Sketch';
-        indicator.classList.toggle('dirty', isSketchDirty);
-    }
 }
 
 // ============================================
@@ -323,12 +298,9 @@ function saveSketch() {
     saveSketchToDB(name, state).then(() => {
         lastSavedState = state;
         isSketchDirty = false;
-        updateSketchNameIndicator();
         populateSketchDropdown();
-        document.getElementById('statusMessage').textContent = `Sketch "${name}" saved`;
     }).catch(err => {
         console.error('Error saving sketch:', err);
-        document.getElementById('statusMessage').textContent = 'Error saving sketch';
     });
 }
 
@@ -351,12 +323,9 @@ function handleSaveConfirm() {
         lastSavedState = state;
         isSketchDirty = false;
         hideModal('saveModal');
-        updateSketchNameIndicator();
         populateSketchDropdown();
-        document.getElementById('statusMessage').textContent = `Sketch "${name}" saved`;
     }).catch(err => {
         console.error('Error saving sketch:', err);
-        document.getElementById('statusMessage').textContent = 'Error saving sketch';
     });
 }
 
@@ -403,8 +372,6 @@ function handleFileImport(event) {
                     currentSketchFile = file.name.replace(/\.json$/, '');
                     lastSavedState = exportSketchState();
                     isSketchDirty = false;
-                    updateSketchNameIndicator();
-                    document.getElementById('statusMessage').textContent = `Sketch loaded from file: ${file.name}`;
                 });
             } else {
                 alert('Invalid sketch file format');
@@ -438,9 +405,7 @@ function loadSketchFromDropdown() {
                 currentSketchFile = name;
                 lastSavedState = exportSketchState();
                 isSketchDirty = false;
-                updateSketchNameIndicator();
                 populateSketchDropdown();
-                document.getElementById('statusMessage').textContent = `Sketch "${name}" loaded`;
             } else {
                 alert('Error loading sketch');
             }
@@ -531,11 +496,9 @@ function newSketch() {
         currentSketchFile = null;
         lastSavedState = null;
         isSketchDirty = false;
-        updateSketchNameIndicator();
         drawCanvas();
         updateStatus();
         populateSketchDropdown();
-        document.getElementById('statusMessage').textContent = 'New sketch created';
     });
 }
 
@@ -704,28 +667,32 @@ function initControls() {
     // Save/Load controls
     initSaveLoadControls();
     
-    // Help button
+    // Help button - toggles modal and changes icon
     const helpBtn = document.getElementById('helpBtn');
-    if (helpBtn) {
-        helpBtn.addEventListener('click', () => {
-            showModal('helpModal');
-        });
-    }
-    
-    // Help modal close button
-    const helpCloseBtn = document.getElementById('helpCloseBtn');
-    if (helpCloseBtn) {
-        helpCloseBtn.addEventListener('click', () => {
-            hideModal('helpModal');
-        });
-    }
-    
-    // Close help modal when clicking outside
     const helpModal = document.getElementById('helpModal');
-    if (helpModal) {
+    if (helpBtn && helpModal) {
+        helpBtn.addEventListener('click', () => {
+            const isOpen = !helpModal.hidden;
+            if (isOpen) {
+                hideModal('helpModal');
+                helpBtn.classList.remove('open');
+                helpBtn.textContent = '?';
+                helpBtn.title = 'Show Help';
+            } else {
+                showModal('helpModal');
+                helpBtn.classList.add('open');
+                helpBtn.textContent = '×';
+                helpBtn.title = 'Close Help';
+            }
+        });
+        
+        // Close help modal when clicking outside
         helpModal.parentElement.addEventListener('click', (e) => {
             if (e.target === helpModal.parentElement) {
                 hideModal('helpModal');
+                helpBtn.classList.remove('open');
+                helpBtn.textContent = '?';
+                helpBtn.title = 'Show Help';
             }
         });
     }
@@ -812,56 +779,8 @@ function initSaveLoadControls() {
 }
 
 function updateStatus() {
-    const stats = getSketchStats();
-    document.getElementById('pointCount').textContent = `Points: ${stats.pointCount}`;
-    document.getElementById('segmentCount').textContent = `Segments: ${stats.segmentCount}`;
-    
-    // Update undo/redo button states
+    // Only keeping undo/redo button updates after removing status bar elements
     updateUndoRedoButtons();
-    
-    const statusEl = document.getElementById('statusMessage');
-    
-    if (isDeleting || optionKeyPressed || currentTool === 'delete') {
-        if (polygonDeletionCandidates.length > 0) {
-            statusEl.textContent = `${polygonDeletionCandidates.length} polygon(s) to delete - click to remove`;
-        } else if (deletionCandidates.length > 0) {
-            statusEl.textContent = `${deletionCandidates.length} segment(s) to delete - click to remove`;
-        } else {
-            statusEl.textContent = 'Delete mode: hover over segments or polygons to highlight, click to delete';
-        }
-    } else if (currentTool === 'polygon') {
-        if (isDrawingPolygon) {
-            statusEl.textContent = `Polygon: ${polygonVertices.length} vertices - click first point to close or press Enter/Escape`;
-        } else {
-            statusEl.textContent = stats.polygonCount > 0 
-                ? `${stats.polygonCount} polygon(s), ${stats.segmentCount} hallway segment(s)` 
-                : stats.segmentCount > 0 ? `${stats.segmentCount} hallway segment(s)` : 'draw polygon: click to add vertex';
-        }
-    } else if (currentTool === 'rectangle') {
-        if (isDrawingRectangle) {
-            statusEl.textContent = 'Rectangle: click to set opposite corner or press Escape to cancel';
-        } else {
-            statusEl.textContent = stats.polygonCount > 0 
-                ? `${stats.polygonCount} polygon(s), ${stats.segmentCount} hallway segment(s)` 
-                : stats.segmentCount > 0 ? `${stats.segmentCount} hallway segment(s)` : 'draw rectangle: click to set first corner';
-        }
-    } else if (currentTool === 'orthogonal') {
-        if (isDrawingOrthogonal) {
-            statusEl.textContent = 'Orthogonal: click to set end point or press Escape to cancel';
-        } else {
-            statusEl.textContent = stats.segmentCount > 0 
-                ? `${stats.segmentCount} hallway segment(s) drawn` : 'draw orthogonal line: click to add first vertex, click again to finish';
-        }
-    } else if (currentTool === 'move') {
-        if (moveVertexCandidates.length > 0) {
-            statusEl.textContent = `${moveVertexCandidates.length} vertex/vertices to move - click and drag`;
-        } else {
-            statusEl.textContent = 'Move mode: hover over vertices to highlight';
-        }
-    } else {
-        statusEl.textContent = stats.segmentCount > 0 ? 
-            `${stats.segmentCount} hallway segment(s) drawn` : 'Draw Lines: click to add first vertex, click again to finish line';
-    }
 }
 
 // ============================================
@@ -890,15 +809,11 @@ function generate3DModel(callback) {
         return;
     }
     
-    document.getElementById('statusMessage').textContent = 'Generating 3D model...';
-    
     setTimeout(() => {
         try {
-            document.getElementById('statusMessage').textContent = 'Building geometry...';
             generatedOBJ = generateOBJFromSketch(sketch, EXTRUSION_HEIGHT, HALLWAY_WIDTH);
             
             document.getElementById('downloadBtn').disabled = false;
-            document.getElementById('statusMessage').textContent = '3D model generated - ready to download';
             
             // Log stats
             const vertexCount = (generatedOBJ.match(/^v /gm) || []).length;
@@ -908,7 +823,6 @@ function generate3DModel(callback) {
             if (callback) callback();
         } catch (e) {
             console.error('Error generating 3D model:', e, e.stack);
-            document.getElementById('statusMessage').textContent = `Error: ${e.message || String(e)}`;
         }
     }, 10);
 }
