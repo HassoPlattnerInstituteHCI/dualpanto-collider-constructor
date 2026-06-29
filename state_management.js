@@ -24,7 +24,9 @@ function saveStateForUndo() {
             bendAxis: ol.bendAxis,
             bendCoord: ol.bendCoord,
             userBendCoord: ol.userBendCoord,
-            isStraight: ol.isStraight
+            isStraight: ol.isStraight,
+            forcedAxisA: ol.forcedAxisA,
+            forcedAxisB: ol.forcedAxisB
         }))
     };
 }
@@ -47,7 +49,9 @@ function restoreState(state) {
         bendAxis: ol.bendAxis,
         bendCoord: ol.bendCoord,
         userBendCoord: ol.userBendCoord,
-        isStraight: ol.isStraight
+        isStraight: ol.isStraight,
+        forcedAxisA: ol.forcedAxisA,
+        forcedAxisB: ol.forcedAxisB
     })) : [];
     
     // Clear move vertex candidates to prevent stale highlights
@@ -183,7 +187,9 @@ function exportSketchState() {
             bendAxis: ol.bendAxis,
             bendCoord: ol.bendCoord,
             userBendCoord: ol.userBendCoord,
-            isStraight: ol.isStraight
+            isStraight: ol.isStraight,
+            forcedAxisA: ol.forcedAxisA,
+            forcedAxisB: ol.forcedAxisB
         }))
     };
 }
@@ -209,7 +215,9 @@ function importSketchState(state) {
         bendAxis: ol.bendAxis,
         bendCoord: ol.bendCoord,
         userBendCoord: ol.userBendCoord,
-        isStraight: ol.isStraight
+        isStraight: ol.isStraight,
+        forcedAxisA: ol.forcedAxisA,
+        forcedAxisB: ol.forcedAxisB
     })) : [];
     
     // Clear all drawing states

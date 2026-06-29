@@ -80,9 +80,10 @@ function getConstraintFromExistingGeometry(point, excludeSeg1 = null, excludeSeg
  * @param {Object} B - End point {x, y}
  * @param {Object|null} ol - OrthoLine object (for excluding its own segments from constraint detection)
  * @param {number|null} userBendCoord - User-defined bend coordinate, if any
+ * @param {boolean} useStoredConstraints - If true, use ol.forcedAxisA/forcedAxisB instead of recalculating (for dragging)
  * @returns {Object} - Geometry info with isStraight, bendAxis, bendCoord, P, Q
  */
-function calculateOrthoGeometry(A, B, ol = null, userBendCoord = null) {
+function calculateOrthoGeometry(A, B, ol = null, userBendCoord = null, useStoredConstraints = false) {
     const minX = Math.min(A.x, B.x);
     const maxX = Math.max(A.x, B.x);
     const minY = Math.min(A.y, B.y);
@@ -102,33 +103,71 @@ function calculateOrthoGeometry(A, B, ol = null, userBendCoord = null) {
         };
     }
     
-    // Determine longer axis
+    // Determine orientation for each arm
+    const defaultAxis = width >= height ? 'x' : 'y';
+    
+    let axisA, axisB;
+    
+    if (useStoredConstraints && ol) {
+        // Use stored forced axes if available, otherwise fall back to default
+        axisA = ol.forcedAxisA !== undefined ? ol.forcedAxisA : defaultAxis;
+        axisB = ol.forcedAxisB !== undefined ? ol.forcedAxisB : defaultAxis;
+    } else {
+        // Determine constraint for each endpoint dynamically
+        // If an endpoint lies on a single existing segment, it should be perpendicular to that segment
+        const excludeSegs = ol ? [ol.seg1, ol.seg2, ol.seg3].filter(s => s !== undefined) : [];
+        const constraintA = getConstraintFromExistingGeometry(A, excludeSegs[0] || null, excludeSegs[1] || null);
+        const constraintB = getConstraintFromExistingGeometry(B, excludeSegs[0] || null, excludeSegs[1] || null);
+        
+        axisA = constraintA ? constraintA.axis : defaultAxis;
+        axisB = constraintB ? constraintB.axis : defaultAxis;
+    }
+    
     let bendAxis, bendCoord, P, Q;
     
-    if (width >= height) {
-        // Horizontal: arms are horizontal, connector is vertical
-        bendAxis = 'x';
-        // Use user-defined bend coordinate if available and valid
-        if (userBendCoord !== null && userBendCoord >= minX && userBendCoord <= maxX) {
-            bendCoord = Math.round(userBendCoord / gridSpacing) * gridSpacing;
+    if (axisA === axisB) {
+        // Both arms have the same orientation
+        bendAxis = axisA;
+        
+        if (bendAxis === 'x') {
+            // Arms are horizontal, connector is vertical
+            // Use user-defined bend coordinate if available and valid, but only if both arms agree
+            if (userBendCoord !== null && userBendCoord >= minX && userBendCoord <= maxX) {
+                bendCoord = Math.round(userBendCoord / gridSpacing) * gridSpacing;
+            } else {
+                // Default to middle
+                bendCoord = Math.round((A.x + B.x) / 2 / gridSpacing) * gridSpacing;
+            }
+            P = { x: bendCoord, y: A.y };
+            Q = { x: bendCoord, y: B.y };
         } else {
-            // Default to middle
-            bendCoord = Math.round((A.x + B.x) / 2 / gridSpacing) * gridSpacing;
+            // Arms are vertical, connector is horizontal
+            if (userBendCoord !== null && userBendCoord >= minY && userBendCoord <= maxY) {
+                bendCoord = Math.round(userBendCoord / gridSpacing) * gridSpacing;
+            } else {
+                bendCoord = Math.round((A.y + B.y) / 2 / gridSpacing) * gridSpacing;
+            }
+            P = { x: A.x, y: bendCoord };
+            Q = { x: B.x, y: bendCoord };
         }
-        P = { x: bendCoord, y: A.y };
-        Q = { x: bendCoord, y: B.y };
     } else {
-        // Vertical: arms are vertical, connector is horizontal
-        bendAxis = 'y';
-        // Use user-defined bend coordinate if available and valid
-        if (userBendCoord !== null && userBendCoord >= minY && userBendCoord <= maxY) {
-            bendCoord = Math.round(userBendCoord / gridSpacing) * gridSpacing;
+        // Arms have different orientations - seg2 will have zero length
+        // P and Q will be at the same point (the intersection of the two arms)
+        bendAxis = null;
+        bendCoord = null;
+        
+        if (axisA === 'x') {
+            // Arm A is horizontal (fixed y), Arm B is vertical (fixed x)
+            // P is on the horizontal line from A, Q is on the vertical line from B
+            // They meet at (B.x, A.y)
+            P = { x: B.x, y: A.y };
+            Q = { x: B.x, y: A.y };
         } else {
-            // Default to middle
-            bendCoord = Math.round((A.y + B.y) / 2 / gridSpacing) * gridSpacing;
+            // Arm A is vertical (fixed x), Arm B is horizontal (fixed y)
+            // They meet at (A.x, B.y)
+            P = { x: A.x, y: B.y };
+            Q = { x: A.x, y: B.y };
         }
-        P = { x: A.x, y: bendCoord };
-        Q = { x: B.x, y: bendCoord };
     }
     
     return {
@@ -143,20 +182,23 @@ function calculateOrthoGeometry(A, B, ol = null, userBendCoord = null) {
 /**
  * Update an orthogonal line's geometry after its endpoints have moved
  * @param {Object} ol - The orthoLine object to update
+ * @param {boolean} duringDrag - If true, use stored forced axes instead of recalculating constraints
  */
-function updateOrthoLine(ol) {
+function updateOrthoLine(ol, duringDrag = false) {
     const A = sketch.points[ol.startPoint];
     const B = sketch.points[ol.endPoint];
     const gridSpacing = getAdaptiveGridSpacing();
     
     // Recalculate geometry
-    const geometry = calculateOrthoGeometry(A, B, ol, ol.userBendCoord);
+    // If during drag, use stored forced axes; otherwise recalculate constraints
+    const geometry = calculateOrthoGeometry(A, B, ol, ol.userBendCoord, duringDrag);
     
     if (geometry.isStraight) {
         // Update to straight mode
         ol.isStraight = true;
         ol.bendAxis = null;
         ol.bendCoord = null;
+        ol.userBendCoord = null;
         
         // If we previously had junction points and segments, move them to create a straight line
         if (ol.junction1 !== undefined && ol.junction2 !== undefined) {
@@ -184,20 +226,32 @@ function updateOrthoLine(ol) {
         ol.bendCoord = geometry.bendCoord;
         ol.isStraight = false;
         
-        // Check if endpoints have moved inward past seg2, in which case reset userBendCoord
-        if (ol.userBendCoord !== null) {
-            if (geometry.bendAxis === 'x') {
-                // Vertical connector (seg2), check if endpoints align with bend coordinate
-                if (A.x === geometry.bendCoord || B.x === geometry.bendCoord) {
-                    // Endpoint has reached seg2, reset user bend coordinate
-                    ol.userBendCoord = null;
-                }
-            } else if (geometry.bendAxis === 'y') {
-                // Horizontal connector (seg2), check if endpoints align with bend coordinate
-                if (A.y === geometry.bendCoord || B.y === geometry.bendCoord) {
-                    // Endpoint has reached seg2, reset user bend coordinate
-                    ol.userBendCoord = null;
-                }
+        // If axes differ (seg2 has zero length), reset userBendCoord
+        // Only recalculate constraints if not during drag
+        if (!duringDrag) {
+            const excludeSegs = [ol.seg1, ol.seg2, ol.seg3].filter(s => s !== undefined);
+            const constraintA = getConstraintFromExistingGeometry(A, excludeSegs[0] || null, excludeSegs[1] || null);
+            const constraintB = getConstraintFromExistingGeometry(B, excludeSegs[0] || null, excludeSegs[1] || null);
+            
+            // Store forced axes if endpoints are on segments
+            if (constraintA) {
+                ol.forcedAxisA = constraintA.axis;
+            } else {
+                delete ol.forcedAxisA;
+            }
+            if (constraintB) {
+                ol.forcedAxisB = constraintB.axis;
+            } else {
+                delete ol.forcedAxisB;
+            }
+            
+            // Reset userBendCoord if axes differ
+            const defaultAxis = (Math.max(A.x, B.x) - Math.min(A.x, B.x)) >= (Math.max(A.y, B.y) - Math.min(A.y, B.y)) ? 'x' : 'y';
+            const axisA = ol.forcedAxisA || defaultAxis;
+            const axisB = ol.forcedAxisB || defaultAxis;
+            
+            if (axisA !== axisB) {
+                ol.userBendCoord = null;
             }
         }
         
@@ -491,6 +545,10 @@ function handleOrthogonalInput(type, snappedMM) {
             sketch.points.push({ x: snappedMM.x, y: snappedMM.y });
             orthoAddedPoints.push(endPointIndex);
             
+            // Check constraints for both endpoints (before adding new segments to exclude list)
+            const constraintA = getConstraintFromExistingGeometry(startPt);
+            const constraintB = getConstraintFromExistingGeometry(snappedMM);
+            
             // Calculate geometry
             const geometry = calculateOrthoGeometry(startPt, snappedMM, null);
             
@@ -503,6 +561,14 @@ function handleOrthogonalInput(type, snappedMM) {
                 bendCoord: geometry.bendCoord,
                 userBendCoord: null  // null means use calculated bendCoord, otherwise use this user-defined value
             };
+            
+            // Store forced axes if endpoints are on segments
+            if (constraintA) {
+                orthoLine.forcedAxisA = constraintA.axis;
+            }
+            if (constraintB) {
+                orthoLine.forcedAxisB = constraintB.axis;
+            }
             
             if (!geometry.isStraight) {
                 // Create junction points and segments for non-straight lines

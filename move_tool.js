@@ -392,7 +392,7 @@ function handleVertexMoveInput(type, mm) {
             for (const idx of moveVertexCandidates) {
                 const orthoLines = getOrthoLinesForEndpoint(idx);
                 for (const ol of orthoLines) {
-                    updateOrthoLine(ol);
+                    updateOrthoLine(ol, true); // duringDrag = true
                 }
             }
             

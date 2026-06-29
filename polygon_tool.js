@@ -333,6 +333,14 @@ function deletePolygons(polygonIndices) {
         poly.vertices = poly.vertices.map(vIdx => pointMap.get(vIdx));
     });
     
+    // Remap orthoLine point references to new point indices
+    sketch.orthoLines.forEach(ol => {
+        if (ol.startPoint !== undefined) ol.startPoint = pointMap.get(ol.startPoint);
+        if (ol.endPoint !== undefined) ol.endPoint = pointMap.get(ol.endPoint);
+        if (ol.junction1 !== undefined) ol.junction1 = pointMap.get(ol.junction1);
+        if (ol.junction2 !== undefined) ol.junction2 = pointMap.get(ol.junction2);
+    });
+    
     polygonDeletionCandidates = [];
     updateStatus();
 }

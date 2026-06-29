@@ -196,6 +196,42 @@ function updateSVGOverlay() {
 // ============================================
 
 /**
+ * Find all segments that are within a threshold distance from the given MM position
+ * For orthoLines, if any segment is selected, all 3 segments are added
+ * Returns array of segment indices
+ */
+function findDeletionCandidates(mmX, mmY) {
+    const threshold = getAdaptiveGridSpacing() * 0.5; // Half a grid cell
+    const candidates = [];
+    const addedOrthoLines = new Set(); // Track orthoLines already added
+    
+    sketch.segments.forEach((seg, idx) => {
+        const p1 = sketch.points[seg.start];
+        const p2 = sketch.points[seg.end];
+        const dist = distanceToSegment(mmX, mmY, p1, p2);
+        
+        if (dist < threshold) {
+            // Check if this segment belongs to an orthoLine
+            const ol = getOrthoLineBySegment(idx);
+            if (ol) {
+                // Add all segments of this orthoLine
+                if (!addedOrthoLines.has(ol)) {
+                    addedOrthoLines.add(ol);
+                    if (ol.seg1 !== undefined) candidates.push(ol.seg1);
+                    if (ol.seg2 !== undefined) candidates.push(ol.seg2);
+                    if (ol.seg3 !== undefined) candidates.push(ol.seg3);
+                }
+            } else {
+                // Regular segment
+                candidates.push(idx);
+            }
+        }
+    });
+    
+    return candidates;
+}
+
+/**
  * Get the grid cell coordinates that a point belongs to
  * Returns { cellX, cellY } in mm, aligned to grid spacing
  * Uses floor to get cell containing point

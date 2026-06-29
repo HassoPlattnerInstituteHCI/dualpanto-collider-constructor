@@ -118,42 +118,6 @@ function drawLineToolPreview(){
 }
 
 /**
- * Find all segments that are within a threshold distance from the given MM position
- * For orthoLines, if any segment is selected, all 3 segments are added
- * Returns array of segment indices
- */
-function findDeletionCandidates(mmX, mmY) {
-    const threshold = getAdaptiveGridSpacing() * 0.5; // Half a grid cell
-    const candidates = [];
-    const addedOrthoLines = new Set(); // Track orthoLines already added
-    
-    sketch.segments.forEach((seg, idx) => {
-        const p1 = sketch.points[seg.start];
-        const p2 = sketch.points[seg.end];
-        const dist = distanceToSegment(mmX, mmY, p1, p2);
-        
-        if (dist < threshold) {
-            // Check if this segment belongs to an orthoLine
-            const ol = getOrthoLineBySegment(idx);
-            if (ol) {
-                // Add all segments of this orthoLine
-                if (!addedOrthoLines.has(ol)) {
-                    addedOrthoLines.add(ol);
-                    if (ol.seg1 !== undefined) candidates.push(ol.seg1);
-                    if (ol.seg2 !== undefined) candidates.push(ol.seg2);
-                    if (ol.seg3 !== undefined) candidates.push(ol.seg3);
-                }
-            } else {
-                // Regular segment
-                candidates.push(idx);
-            }
-        }
-    });
-    
-    return candidates;
-}
-
-/**
  * Delete segments by index and remove orphaned points
  * Rebuilds points array and remaps segment indices
  */
@@ -175,8 +139,26 @@ function deleteSegments(segmentIndices) {
         return deletedSegments < totalSegments;
     });
     
+    // Build segment index remapping (old index -> new index)
+    // We need this because filtering segments changes their indices
+    const segmentMap = new Map();
+    let newSegIndex = 0;
+    sketch.segments.forEach((_, oldIndex) => {
+        if (!indicesToDelete.has(oldIndex)) {
+            segmentMap.set(oldIndex, newSegIndex);
+            newSegIndex++;
+        }
+    });
+    
     // Remove segments
     sketch.segments = sketch.segments.filter((_, idx) => !indicesToDelete.has(idx));
+    
+    // Update orthoLine segment references to use new segment indices
+    sketch.orthoLines.forEach(ol => {
+        if (ol.seg1 !== undefined) ol.seg1 = segmentMap.get(ol.seg1);
+        if (ol.seg2 !== undefined) ol.seg2 = segmentMap.get(ol.seg2);
+        if (ol.seg3 !== undefined) ol.seg3 = segmentMap.get(ol.seg3);
+    });
     
     // Find points that are still referenced by remaining segments OR polygons
     const usedPointIndices = new Set();
@@ -212,6 +194,14 @@ function deleteSegments(segmentIndices) {
     // Remap polygon vertex indices to new point indices
     sketch.polygons.forEach(poly => {
         poly.vertices = poly.vertices.map(vIdx => pointMap.get(vIdx));
+    });
+    
+    // Remap orthoLine point references to new point indices
+    sketch.orthoLines.forEach(ol => {
+        if (ol.startPoint !== undefined) ol.startPoint = pointMap.get(ol.startPoint);
+        if (ol.endPoint !== undefined) ol.endPoint = pointMap.get(ol.endPoint);
+        if (ol.junction1 !== undefined) ol.junction1 = pointMap.get(ol.junction1);
+        if (ol.junction2 !== undefined) ol.junction2 = pointMap.get(ol.junction2);
     });
     
     updateStatus();
