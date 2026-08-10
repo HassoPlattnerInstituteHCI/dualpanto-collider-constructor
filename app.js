@@ -6,6 +6,7 @@
 // ============================================
 
 let generatedOBJ = null;
+let saveAsNewMode = false;   // Flag to track if we're in "save as new" mode
 
 // 3D Generation Settings - central values that can be easily adjusted
 const EXTRUSION_HEIGHT = 10;  // mm - height of the extruded model
@@ -46,6 +47,10 @@ function hideModal(modalId) {
     const modal = document.getElementById(modalId);
     if (modal) {
         modal.hidden = true;
+        // Clear saveAsNewMode flag when save modal is closed
+        if (modalId === 'saveModal') {
+            saveAsNewMode = false;
+        }
     }
 }
 
@@ -242,8 +247,7 @@ function checkSketchDirty() {
 function updateDirtyState() {
     const wasDirty = isSketchDirty;
     isSketchDirty = checkSketchDirty();
-    
-
+    updateSaveAsNewButton();
     
     return isSketchDirty;
 }
@@ -254,6 +258,7 @@ function updateDirtyState() {
 function markSketchClean() {
     lastSavedState = exportSketchState();
     isSketchDirty = false;
+    updateSaveAsNewButton();
 }
 
 /**
@@ -261,6 +266,40 @@ function markSketchClean() {
  */
 function markSketchDirty() {
     isSketchDirty = true;
+    updateSaveAsNewButton();
+}
+
+// ============================================
+// SAVE AS NEW FUNCTIONALITY
+// ============================================
+
+/**
+ * Update Save As New button visibility based on state
+ */
+function updateSaveAsNewButton() {
+    const saveAsNewBtn = document.getElementById('saveAsNewBtn');
+    if (!saveAsNewBtn) return;
+    
+    // Show when we have a loaded sketch with unsaved changes
+    const shouldShow = currentSketchFile !== null && isSketchDirty;
+    saveAsNewBtn.hidden = !shouldShow;
+}
+
+/**
+ * Handle Save As New button click
+ */
+function handleSaveAsNew() {
+    // Don't show during initialization
+    if (!appInitialized) return;
+    
+    const input = document.getElementById('sketchNameInput');
+    if (input) {
+        // Suggest a name based on current sketch
+        input.value = currentSketchFile ? `${currentSketchFile} (copy)` : 'New Sketch';
+        input.select(); // Select all text for easy editing
+    }
+    showModal('saveModal');
+    saveAsNewMode = true;
 }
 
 // ============================================
@@ -278,6 +317,7 @@ function promptForSketchName() {
     if (input) {
         input.value = currentSketchFile || '';
     }
+    saveAsNewMode = false; // Ensure we're in regular save mode
     showModal('saveModal');
 }
 
@@ -299,6 +339,7 @@ function saveSketch() {
         lastSavedState = state;
         isSketchDirty = false;
         populateSketchDropdown();
+        updateSaveAsNewButton();
     }).catch(err => {
         console.error('Error saving sketch:', err);
     });
@@ -318,15 +359,34 @@ function handleSaveConfirm() {
     
     const state = exportSketchState();
     
-    saveSketchToDB(name, state).then(() => {
-        currentSketchFile = name;
-        lastSavedState = state;
-        isSketchDirty = false;
-        hideModal('saveModal');
-        populateSketchDropdown();
-    }).catch(err => {
-        console.error('Error saving sketch:', err);
-    });
+    // Check if we're in "save as new" mode
+    if (saveAsNewMode) {
+        // Save to new name, switch to it
+        saveSketchToDB(name, state).then(() => {
+            currentSketchFile = name;
+            lastSavedState = state;
+            isSketchDirty = false;
+            saveAsNewMode = false;
+            hideModal('saveModal');
+            populateSketchDropdown();
+            updateSaveAsNewButton();
+        }).catch(err => {
+            console.error('Error saving sketch:', err);
+            saveAsNewMode = false;
+        });
+    } else {
+        // Regular save - save to currentSketchFile (or set it if new)
+        saveSketchToDB(name, state).then(() => {
+            currentSketchFile = name;
+            lastSavedState = state;
+            isSketchDirty = false;
+            hideModal('saveModal');
+            populateSketchDropdown();
+            updateSaveAsNewButton();
+        }).catch(err => {
+            console.error('Error saving sketch:', err);
+        });
+    }
 }
 
 /**
@@ -372,6 +432,7 @@ function handleFileImport(event) {
                     currentSketchFile = file.name.replace(/\.json$/, '');
                     lastSavedState = exportSketchState();
                     isSketchDirty = false;
+                    updateSaveAsNewButton();
                 });
             } else {
                 alert('Invalid sketch file format');
@@ -406,6 +467,7 @@ function loadSketchFromDropdown() {
                 lastSavedState = exportSketchState();
                 isSketchDirty = false;
                 populateSketchDropdown();
+                updateSaveAsNewButton();
             } else {
                 alert('Error loading sketch');
             }
@@ -499,6 +561,7 @@ function newSketch() {
         drawCanvas();
         updateStatus();
         populateSketchDropdown();
+        updateSaveAsNewButton();
     });
 }
 
@@ -734,6 +797,12 @@ function initSaveLoadControls() {
         saveBtn.addEventListener('click', saveSketch);
     }
     
+    // Save As New button
+    const saveAsNewBtn = document.getElementById('saveAsNewBtn');
+    if (saveAsNewBtn) {
+        saveAsNewBtn.addEventListener('click', handleSaveAsNew);
+    }
+    
     // Save modal buttons
     const saveConfirmBtn = document.getElementById('saveConfirmBtn');
     if (saveConfirmBtn) {
@@ -742,7 +811,10 @@ function initSaveLoadControls() {
     
     const saveCancelBtn = document.getElementById('saveCancelBtn');
     if (saveCancelBtn) {
-        saveCancelBtn.addEventListener('click', () => hideModal('saveModal'));
+        saveCancelBtn.addEventListener('click', () => {
+            saveAsNewMode = false;
+            hideModal('saveModal');
+        });
     }
     
     // New Sketch button
@@ -797,6 +869,7 @@ function initSaveLoadControls() {
             if (e.target === overlay) {
                 overlay.hidden = true;
                 pendingAction = null;
+                saveAsNewMode = false;
             }
         });
     });
@@ -866,6 +939,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Mark app as initialized (after a brief delay to ensure IndexedDB is ready)
     setTimeout(() => {
         appInitialized = true;
+        updateSaveAsNewButton();
         console.log('App fully initialized');
     }, 100);
 });
@@ -885,6 +959,7 @@ window.onload = function() {
         
         setTimeout(() => {
             appInitialized = true;
+            updateSaveAsNewButton();
             console.log('App fully initialized');
         }, 100);
     }
