@@ -192,6 +192,9 @@ function removeRectangleOrphanedPoints() {
     sketch.polygons.forEach(poly => {
         poly.vertices.forEach(vIdx => usedPointIndices.add(vIdx));
     });
+    sketch.obstacles.forEach(obstacle => {
+        obstacle.vertices.forEach(vIdx => usedPointIndices.add(vIdx));
+    });
     
     // Only keep points that are still referenced
     const usedPoints = [];

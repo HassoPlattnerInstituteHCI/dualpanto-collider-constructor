@@ -181,6 +181,9 @@ function removePolygonOrphanedPoints() {
     sketch.polygons.forEach(poly => {
         poly.vertices.forEach(vIdx => usedPointIndices.add(vIdx));
     });
+    sketch.obstacles.forEach(obstacle => {
+        obstacle.vertices.forEach(vIdx => usedPointIndices.add(vIdx));
+    });
     
     // Only keep points that are still referenced
     const usedPoints = [];
@@ -297,7 +300,7 @@ function deletePolygons(polygonIndices) {
     // Remove polygons
     sketch.polygons = sketch.polygons.filter((_, idx) => !indicesToDelete.has(idx));
     
-    // Find all point indices used by remaining segments and polygons
+    // Find all point indices used by remaining segments, polygons, and obstacles
     const usedPointIndices = new Set();
     sketch.segments.forEach(seg => {
         usedPointIndices.add(seg.start);
@@ -305,6 +308,9 @@ function deletePolygons(polygonIndices) {
     });
     sketch.polygons.forEach(poly => {
         poly.vertices.forEach(vIdx => usedPointIndices.add(vIdx));
+    });
+    sketch.obstacles.forEach(obstacle => {
+        obstacle.vertices.forEach(vIdx => usedPointIndices.add(vIdx));
     });
     
     // Build new points array and create mapping from old index to new index

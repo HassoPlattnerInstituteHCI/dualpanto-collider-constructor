@@ -432,11 +432,14 @@ function drawGrid() {
 
 function drawSketch() {
     // Draw segments - deletion candidates in red, others in black
+    // Only highlight segments if no higher-priority candidates (obstacles or polygons) exist
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     
+    const shouldHighlightSegments = obstacleDeletionCandidates.length === 0 && polygonDeletionCandidates.length === 0;
+    
     sketch.segments.forEach((seg, idx) => {
-        const isCandidate = deletionCandidates.includes(idx);
+        const isCandidate = shouldHighlightSegments && deletionCandidates.includes(idx);
         ctx.strokeStyle = isCandidate ? '#ff0000' : '#000';
         ctx.lineWidth = isCandidate ? 3 : 2;
         
@@ -452,9 +455,10 @@ function drawSketch() {
     });
     
     // Draw polygons - dark blue edges with semi-transparent fill
+    // Only highlight polygons if no higher-priority candidates (obstacles) exist
     sketch.polygons.forEach((poly, polyIdx) => {
         if (poly.vertices.length >= 3) {
-            const isPolygonCandidate = polygonDeletionCandidates.includes(polyIdx);
+            const isPolygonCandidate = obstacleDeletionCandidates.length === 0 && polygonDeletionCandidates.includes(polyIdx);
             
             // Draw polygon fill (semi-transparent blue or red for deletion candidates)
             ctx.fillStyle = isPolygonCandidate ? 'rgba(255, 0, 0, 0.3)' : 'rgba(0, 100, 255, 0.3)';

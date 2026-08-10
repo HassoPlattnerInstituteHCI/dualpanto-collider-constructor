@@ -160,7 +160,7 @@ function deleteSegments(segmentIndices) {
         if (ol.seg3 !== undefined) ol.seg3 = segmentMap.get(ol.seg3);
     });
     
-    // Find points that are still referenced by remaining segments OR polygons
+    // Find points that are still referenced by remaining segments OR polygons OR obstacles
     const usedPointIndices = new Set();
     sketch.segments.forEach(seg => {
         usedPointIndices.add(seg.start);
@@ -168,6 +168,9 @@ function deleteSegments(segmentIndices) {
     });
     sketch.polygons.forEach(poly => {
         poly.vertices.forEach(vIdx => usedPointIndices.add(vIdx));
+    });
+    sketch.obstacles.forEach(obstacle => {
+        obstacle.vertices.forEach(vIdx => usedPointIndices.add(vIdx));
     });
     
     // Build new points array and create mapping from old index to new index

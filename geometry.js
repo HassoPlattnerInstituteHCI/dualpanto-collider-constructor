@@ -532,16 +532,13 @@ function createSideRect(polygons, p1, p2, zMin, zMax) {
 
 /**
  * Creates an extruded prism from a 2D polygon (convex or concave).
- * Creates a clean N-gon for top and bottom faces with side walls for outer edges.
- * Uses the same approach as createExtrudedPrism - CSG handles concave polygons internally.
+ * Alias for createExtrudedPrism - kept for backward compatibility.
  * @param {Array} points2D - Array of polygon vertices [{x, y}, ...]
  * @param {number} zMin - Minimum Z coordinate
  * @param {number} zMax - Maximum Z coordinate
  * @returns {CSG} CSG solid representing the extruded prism
  */
 function createConcavePrism(points2D, zMin, zMax) {
-    // Simply use createExtrudedPrism - it works for both convex and concave polygons
-    // CSG.Polygon handles concave N-gons internally via triangulation
     return createExtrudedPrism(points2D, zMin, zMax);
 }
 
@@ -650,7 +647,7 @@ function generateCSGModel(sketch, extrusionHeight, hallwayWidth, miterLimit = 4)
     
     // Create base cube that encloses all segments and polygons
     // Use hallwayWidth * 2 as padding - this will be added to the actual bounding box
-    const basePadding = hallwayWidth * 2;
+    const basePadding = hallwayWidth * 5;
     let base = hasNonObstacleFeatures ? createBaseCube(sketch, extrusionHeight, basePadding) : null;
 
     // Maps to store the clean transition line for each segment end

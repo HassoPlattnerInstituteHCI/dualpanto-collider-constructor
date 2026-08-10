@@ -385,6 +385,9 @@ function removeOrthogonalOrphanedPoints() {
     sketch.polygons.forEach(poly => {
         poly.vertices.forEach(vIdx => usedPointIndices.add(vIdx));
     });
+    sketch.obstacles.forEach(obstacle => {
+        obstacle.vertices.forEach(vIdx => usedPointIndices.add(vIdx));
+    });
     sketch.orthoLines.forEach(ol => {
         if (ol.startPoint !== undefined) usedPointIndices.add(ol.startPoint);
         if (ol.endPoint !== undefined) usedPointIndices.add(ol.endPoint);
