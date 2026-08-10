@@ -349,6 +349,24 @@ function generateCSGModel(sketch, extrusionHeight, hallwayWidth, miterLimit = 4)
             }
         });
     }
+    
+    // 4. Add obstacle volumes (material to keep within rooms)
+    // Obstacles are united with the base, so material remains solid in obstacle areas
+    if (sketch.obstacles) {
+        sketch.obstacles.forEach(obstacle => {
+            if (obstacle.vertices.length >= 3) {
+                // Get the vertices for this obstacle
+                let obstacleVertices = obstacle.vertices.map(vIdx => sketch.points[vIdx]);
+                
+                // Create obstacle volume - do NOT offset (obstacles represent exact interior areas)
+                const obstacleVolume = createPolygonPrism(obstacleVertices, 0, extrusionHeight);
+                if (obstacleVolume) {
+                    // Union: keep material in obstacle areas
+                    base = base.union(obstacleVolume);
+                }
+            }
+        });
+    }
 
     return base;
 }

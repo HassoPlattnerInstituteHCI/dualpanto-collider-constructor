@@ -528,6 +528,14 @@ function initToolShortcuts() {
                     setTool('rectangle');
                     e.preventDefault();
                     break;
+                case 'b':
+                    setTool('polygon_obstacle');
+                    e.preventDefault();
+                    break;
+                case 'n':
+                    setTool('rectangle_obstacle');
+                    e.preventDefault();
+                    break;
                 case 'o':
                     setTool('orthogonal');
                     e.preventDefault();
@@ -578,6 +586,21 @@ function setTool(toolName) {
         previewPoint = null;
         window.rectangleBeforeState = null; // Clean up saved state
     }
+    if (toolName !== 'polygon_obstacle') {
+        isDrawingPolygonObstacle = false;
+        obstacleVertices = [];
+        obstacleStartIndex = null;
+        obstacleAddedPoints = [];
+        previewPoint = null;
+        window.obstacleBeforeState = null; // Clean up saved state
+    }
+    if (toolName !== 'rectangle_obstacle') {
+        isDrawingRectangleObstacle = false;
+        obstacleRectangleStartIndex = null;
+        obstacleRectangleAddedPoints = [];
+        previewPoint = null;
+        window.obstacleRectangleBeforeState = null; // Clean up saved state
+    }
     if (toolName !== 'orthogonal') {
         isDrawingOrthogonal = false;
         orthoStartIndex = null;
@@ -600,6 +623,7 @@ function setTool(toolName) {
     if (toolName !== 'delete') {
         deletionCandidates = [];
         polygonDeletionCandidates = [];
+        obstacleDeletionCandidates = [];
     }
     
     // Update canvas cursor based on new tool
@@ -804,8 +828,8 @@ function updateUndoRedoButtons() {
 // ============================================
 
 function generate3DModel(callback) {
-    if (sketch.segments.length === 0 && (!sketch.polygons || sketch.polygons.length === 0)) {
-        alert('Please draw at least one hallway segment or polygon.');
+    if (sketch.segments.length === 0 && (!sketch.polygons || sketch.polygons.length === 0) && (!sketch.obstacles || sketch.obstacles.length === 0)) {
+        alert('Please draw at least one hallway segment, room, or obstacle.');
         return;
     }
     

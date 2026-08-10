@@ -13,7 +13,9 @@
     <script src="move_tool.js"></script>
     <script src="line_tool.js"></script>
     <script src="rectangle_tool.js"></script>
+    <script src="rectangle_obstacle_tool.js"></script>
     <script src="polygon_tool.js"></script>
+    <script src="polygon_obstacle_tool.js"></script>
     <script src="state_management.js"></script>
     <script src="objExporter.js"></script>
     <script src="geometry.js"></script>
@@ -80,6 +82,14 @@
             <button class="tool-btn" data-tool="rectangle" title="Rectangle Tool (R)"><img src="icons/rectangle_24dp_1F1F1F_FILL0_wght400_GRAD0_opsz24.svg" alt="Rectangle"></button>
             <span class="tool-label">Rectangular Room [R]</span>
         </div>
+        <div class="tool-item" data-tool="polygon_obstacle">
+            <button class="tool-btn" data-tool="polygon_obstacle" title="Polygon Obstacle Tool (B)"><img src="icons/pentagon_obstacle_24dp.svg" alt="Polygon Obstacle"></button>
+            <span class="tool-label">Polygon Obstacle [B]</span>
+        </div>
+        <div class="tool-item" data-tool="rectangle_obstacle">
+            <button class="tool-btn" data-tool="rectangle_obstacle" title="Rectangle Obstacle Tool (N)"><img src="icons/rectangle_obstacle_24dp.svg" alt="Rectangle Obstacle"></button>
+            <span class="tool-label">Rectangle Obstacle [N]</span>
+        </div>
         <div class="tool-item" data-tool="move">
             <button class="tool-btn" data-tool="move" title="Move Vertex (M)"><img src="icons/control_camera_24dp_1F1F1F_FILL0_wght400_GRAD0_opsz24.svg" alt="Move"></button>
             <span class="tool-label">Move Element [M]</span>
@@ -105,8 +115,10 @@
                 <li><strong>O</strong> - Orthogonal Hallway Tool: Click to start, click again to end an orthogonal hallway with 90° bends</li>
                 <li><strong>P</strong> - Room Tool: Click to add vertices, close the polygon to create a room</li>
                 <li><strong>R</strong> - Rectangular Room Tool: Click to create corner, click again to create opposite corner</li>
-                <li><strong>M</strong> - Move Tool: Hover to select, then click and drag to move. You can select polygons, edges, or individual vertices. Hold cmd to move all vertices in a location at once.</li>
-                <li><strong>D</strong> - Delete Tool: Click on hallways or rooms to delete them</li>
+                <li><strong>B</strong> - Polygon Obstacle Tool: Click to add vertices, close the polygon to create an obstacle (material to keep)</li>
+                <li><strong>N</strong> - Rectangle Obstacle Tool: Click to create corner, click again to create opposite corner</li>
+                <li><strong>M</strong> - Move Tool: Hover to select, then click and drag to move. You can select polygons, edges, obstacles, or individual vertices. Hold cmd to move all vertices in a location at once.</li>
+                <li><strong>D</strong> - Delete Tool: Click on hallways, rooms, or obstacles to delete them</li>
                 <li><strong>Alt/Opt</strong> + Click: Delete mode (temporary)</li>
                 <li><strong>Shift</strong> + Drag: Pan the view</li>
                 <li><strong>Scroll</strong>: Zoom in/out</li>

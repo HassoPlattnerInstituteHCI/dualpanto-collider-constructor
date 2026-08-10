@@ -9,6 +9,7 @@ const sketch = {
     points: [],       // Array of {x: number, y: number, type?: string} in mm
     segments: [],     // Array of {start: index, end: index} referencing points
     polygons: [],      // Array of {vertices: [index, index, ...]} for polygon cutouts
+    obstacles: [],    // Array of {vertices: [index, index, ...]} for obstacles (material to keep)
     orthoLines: []     // Array of orthoLine objects for orthogonal line connections
 };
 
@@ -40,11 +41,12 @@ let shiftKeyPressed = false;
 let isDeleting = false;           // Toggle state for delete mode
 let deletionCandidates = [];     // Array of segment indices to delete
 let polygonDeletionCandidates = []; // Array of polygon indices to delete
+let obstacleDeletionCandidates = []; // Array of obstacle indices to delete
 let optionKeyPressed = false;    // Track Option/Alt key state
 let commandKeyPressed = false;   // Track Command/Ctrl key state
 
 // Tool state
-let currentTool = 'line';         // 'line' | 'polygon' | 'delete' | 'rectangle' | 'orthogonal'
+let currentTool = 'line';         // 'line' | 'polygon' | 'delete' | 'rectangle' | 'orthogonal' | 'polygon_obstacle' | 'rectangle_obstacle'
 
 // Drawing state (for line tool)
 let isDrawing = false;
@@ -62,6 +64,17 @@ let polygonAddedPoints = [];     // Track indices of points added during current
 let isDrawingRectangle = false;
 let rectangleStartIndex = null;  // Index of first corner point
 let rectangleAddedPoints = [];   // Track indices of points added during rectangle drawing
+
+// Polygon obstacle drawing state
+let isDrawingPolygonObstacle = false;
+let obstacleVertices = [];         // Array of point indices for current polygon obstacle
+let obstacleStartIndex = null;    // Index of first vertex for current polygon obstacle
+let obstacleAddedPoints = [];     // Track indices of points added during current polygon obstacle drawing
+
+// Rectangle obstacle drawing state
+let isDrawingRectangleObstacle = false;
+let obstacleRectangleStartIndex = null;  // Index of first corner point
+let obstacleRectangleAddedPoints = [];   // Track indices of points added during rectangle obstacle drawing
 
 // Orthogonal line drawing state
 let isDrawingOrthogonal = false;
@@ -471,6 +484,39 @@ function drawSketch() {
         }
     });
     
+    // Draw obstacles - dark gray/black edges with semi-transparent fill
+    sketch.obstacles.forEach((obstacle, obstacleIdx) => {
+        if (obstacle.vertices.length >= 3) {
+            const isObstacleCandidate = obstacleDeletionCandidates.includes(obstacleIdx);
+            
+            // Draw obstacle fill (semi-transparent black/gray or red for deletion candidates)
+            ctx.fillStyle = isObstacleCandidate ? 'rgba(255, 0, 0, 0.3)' : 'rgba(32, 32, 32, 0.3)';
+            ctx.beginPath();
+            const firstPixel = mmToPixel(sketch.points[obstacle.vertices[0]].x, sketch.points[obstacle.vertices[0]].y);
+            ctx.moveTo(firstPixel.x, firstPixel.y);
+            for (let i = 1; i < obstacle.vertices.length; i++) {
+                const pixel = mmToPixel(sketch.points[obstacle.vertices[i]].x, sketch.points[obstacle.vertices[i]].y);
+                ctx.lineTo(pixel.x, pixel.y);
+            }
+            // Close the path back to first vertex
+            ctx.lineTo(firstPixel.x, firstPixel.y);
+            ctx.fill();
+            
+            // Draw obstacle edges (dark gray or red for deletion candidates)
+            ctx.strokeStyle = isObstacleCandidate ? '#ff0000' : '#202020';
+            ctx.lineWidth = isObstacleCandidate ? 3 : 2;
+            ctx.beginPath();
+            ctx.moveTo(firstPixel.x, firstPixel.y);
+            for (let i = 1; i < obstacle.vertices.length; i++) {
+                const pixel = mmToPixel(sketch.points[obstacle.vertices[i]].x, sketch.points[obstacle.vertices[i]].y);
+                ctx.lineTo(pixel.x, pixel.y);
+            }
+            // Close the path back to first vertex
+            ctx.lineTo(firstPixel.x, firstPixel.y);
+            ctx.stroke();
+        }
+    });
+    
     // Draw closest edge(s) in bold for move tool
     if (currentTool === 'move' && moveClosestEdges.length > 0) {
         ctx.strokeStyle = '#ffa500';  // Orange to match vertex highlight
@@ -537,6 +583,16 @@ function drawPreview() {
     if (currentTool === 'orthogonal' && isDrawingOrthogonal && orthoStartIndex !== null) {
         drawOrthogonalToolPreview()
     }
+    
+    // Draw polygon obstacle tool preview
+    if (currentTool === 'polygon_obstacle' && isDrawingPolygonObstacle && obstacleVertices.length > 0) {
+        drawPolygonObstacleToolPreview();
+    }
+    
+    // Draw rectangle obstacle tool preview
+    if (currentTool === 'rectangle_obstacle' && isDrawingRectangleObstacle && obstacleRectangleStartIndex !== null) {
+        drawRectangleObstacleToolPreview();
+    }
 }
 
 function drawCanvas() {
@@ -572,10 +628,24 @@ function handleCanvasInput(type, mouseX, mouseY) {
             // Update deletion candidates as cursor moves
             deletionCandidates = findDeletionCandidates(snappedMM.x, snappedMM.y);
             polygonDeletionCandidates = findPolygonDeletionCandidates(snappedMM.x, snappedMM.y);
+            obstacleDeletionCandidates = findPolygonObstacleDeletionCandidates(snappedMM.x, snappedMM.y);
             drawCanvas();
         } else if (type === 'up') {
             // Delete the candidates on click release
-            if (polygonDeletionCandidates.length > 0) {
+            if (obstacleDeletionCandidates.length > 0) {
+                // Save state before the action for undo
+                const beforeState = saveStateForUndo();
+                deleteObstacles(obstacleDeletionCandidates);
+                
+                // Record the action for undo
+                recordSimpleAction(beforeState);
+                
+                obstacleDeletionCandidates = [];
+                polygonDeletionCandidates = [];
+                deletionCandidates = [];
+                drawCanvas();
+                updateStatus();
+            } else if (polygonDeletionCandidates.length > 0) {
                 // Save state before the action for undo
                 const beforeState = saveStateForUndo();
                 deletePolygons(polygonDeletionCandidates);
@@ -609,9 +679,21 @@ function handleCanvasInput(type, mouseX, mouseY) {
         return;
     }
     
+    // Rectangle obstacle drawing logic
+    if (currentTool === 'rectangle_obstacle') {
+        handleRectangleObstacleInput(type, snappedMM);
+        return;
+    }
+    
     // Polygon drawing logic
     if (currentTool === 'polygon') {
         handlePolygonInput(type, snappedMM);
+        return;
+    }
+    
+    // Polygon obstacle drawing logic
+    if (currentTool === 'polygon_obstacle') {
+        handlePolygonObstacleInput(type, snappedMM);
         return;
     }
     
@@ -789,6 +871,63 @@ function initSketchCanvas() {
             }
         }
         
+        // Polygon obstacle tool keyboard shortcuts
+        if (currentTool === 'polygon_obstacle') {
+            if (e.code === 'Escape') {
+                // Cancel polygon obstacle drawing
+                if (isDrawingPolygonObstacle) {
+                    isDrawingPolygonObstacle = false;
+                    obstacleVertices = [];
+                    obstacleStartIndex = null;
+                    window.obstacleBeforeState = null; // Clean up saved state
+                    removePolygonObstacleOrphanedPoints();
+                    drawCanvas();
+                    updateStatus();
+                }
+                e.preventDefault();
+            } else if (e.code === 'Enter' && isDrawingPolygonObstacle && obstacleVertices.length >= 3) {
+                // Use the state saved when starting the polygon obstacle
+                const beforeState = window.obstacleBeforeState;
+                
+                // Auto-close polygon obstacle - check for overlapping vertices first
+                const cleanedVertices = removeOverlappingPolygonVertices([...obstacleVertices]);
+                sketch.obstacles.push({
+                    vertices: cleanedVertices
+                });
+                
+                // Record the action for undo
+                if (beforeState) {
+                    recordSimpleAction(beforeState);
+                    window.obstacleBeforeState = null;
+                }
+                
+                isDrawingPolygonObstacle = false;
+                obstacleVertices = [];
+                obstacleStartIndex = null;
+                obstacleAddedPoints = [];
+                previewPoint = null;
+                drawCanvas();
+                updateStatus();
+                e.preventDefault();
+            }
+        }
+        
+        // Rectangle obstacle tool keyboard shortcuts
+        if (currentTool === 'rectangle_obstacle') {
+            if (e.code === 'Escape') {
+                // Cancel rectangle obstacle drawing
+                if (isDrawingRectangleObstacle) {
+                    isDrawingRectangleObstacle = false;
+                    obstacleRectangleStartIndex = null;
+                    window.obstacleRectangleBeforeState = null; // Clean up saved state
+                    removeRectangleObstacleOrphanedPoints();
+                    drawCanvas();
+                    updateStatus();
+                }
+                e.preventDefault();
+            }
+        }
+        
         // Orthogonal tool keyboard shortcuts
         if (currentTool === 'orthogonal') {
             if (e.code === 'Escape') {
@@ -899,6 +1038,25 @@ function initSketchCanvas() {
             previewPoint = null;
             window.rectangleBeforeState = null; // Clean up saved state
             removeRectangleOrphanedPoints();
+            drawCanvas();
+        }
+        if (isDrawingRectangleObstacle) {
+            // Cancel rectangle obstacle drawing on mouse leave
+            isDrawingRectangleObstacle = false;
+            obstacleRectangleStartIndex = null;
+            previewPoint = null;
+            window.obstacleRectangleBeforeState = null; // Clean up saved state
+            removeRectangleObstacleOrphanedPoints();
+            drawCanvas();
+        }
+        if (isDrawingPolygonObstacle) {
+            // Cancel polygon obstacle drawing on mouse leave
+            isDrawingPolygonObstacle = false;
+            obstacleVertices = [];
+            obstacleStartIndex = null;
+            previewPoint = null;
+            window.obstacleBeforeState = null; // Clean up saved state
+            removePolygonObstacleOrphanedPoints();
             drawCanvas();
         }
         if (isDrawingOrthogonal) {

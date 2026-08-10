@@ -13,6 +13,7 @@ function saveStateForUndo() {
         points: sketch.points.map(p => ({ x: p.x, y: p.y, type: p.type })),
         segments: sketch.segments.map(seg => ({ start: seg.start, end: seg.end })),
         polygons: sketch.polygons.map(poly => ({ vertices: poly.vertices.slice() })),
+        obstacles: sketch.obstacles.map(obstacle => ({ vertices: obstacle.vertices.slice() })),
         orthoLines: sketch.orthoLines.map(ol => ({
             startPoint: ol.startPoint,
             endPoint: ol.endPoint,
@@ -38,6 +39,7 @@ function restoreState(state) {
     sketch.points = state.points.map(p => ({ x: p.x, y: p.y, type: p.type }));
     sketch.segments = state.segments.map(seg => ({ start: seg.start, end: seg.end }));
     sketch.polygons = state.polygons.map(poly => ({ vertices: poly.vertices.slice() }));
+    sketch.obstacles = state.obstacles ? state.obstacles.map(obstacle => ({ vertices: obstacle.vertices.slice() })) : [];
     sketch.orthoLines = state.orthoLines ? state.orthoLines.map(ol => ({
         startPoint: ol.startPoint,
         endPoint: ol.endPoint,
@@ -176,6 +178,7 @@ function exportSketchState() {
         points: sketch.points.map(p => ({ x: p.x, y: p.y, type: p.type })),
         segments: sketch.segments.map(seg => ({ start: seg.start, end: seg.end })),
         polygons: sketch.polygons.map(poly => ({ vertices: poly.vertices.slice() })),
+        obstacles: sketch.obstacles.map(obstacle => ({ vertices: obstacle.vertices.slice() })),
         orthoLines: sketch.orthoLines.map(ol => ({
             startPoint: ol.startPoint,
             endPoint: ol.endPoint,
@@ -204,6 +207,7 @@ function importSketchState(state) {
     sketch.points = state.points ? state.points.map(p => ({ x: p.x, y: p.y, type: p.type })) : [];
     sketch.segments = state.segments ? state.segments.map(seg => ({ start: seg.start, end: seg.end })) : [];
     sketch.polygons = state.polygons ? state.polygons.map(poly => ({ vertices: poly.vertices.slice() })) : [];
+    sketch.obstacles = state.obstacles ? state.obstacles.map(obstacle => ({ vertices: obstacle.vertices.slice() })) : [];
     sketch.orthoLines = state.orthoLines ? state.orthoLines.map(ol => ({
         startPoint: ol.startPoint,
         endPoint: ol.endPoint,
@@ -238,6 +242,15 @@ function importSketchState(state) {
     orthoStartIndex = null;
     window.orthoBeforeState = null; // Clean up saved state
     orthoAddedPoints = [];
+    isDrawingPolygonObstacle = false;
+    obstacleVertices = [];
+    obstacleStartIndex = null;
+    window.obstacleBeforeState = null; // Clean up saved state
+    obstacleAddedPoints = [];
+    isDrawingRectangleObstacle = false;
+    obstacleRectangleStartIndex = null;
+    window.obstacleRectangleBeforeState = null; // Clean up saved state
+    obstacleRectangleAddedPoints = [];
     
     // Clear selection states
     moveVertexCandidates = [];
@@ -246,6 +259,7 @@ function importSketchState(state) {
     moveConstraintAxis = null;
     deletionCandidates = [];
     polygonDeletionCandidates = [];
+    obstacleDeletionCandidates = [];
     
     // Clear undo/redo stacks
     clearUndoRedoStacks();
@@ -294,6 +308,17 @@ function compareSketchStates(a, b) {
         }
     }
     
+    // Compare obstacles
+    if (a.obstacles.length !== b.obstacles.length) return false;
+    for (let i = 0; i < a.obstacles.length; i++) {
+        if (a.obstacles[i].vertices.length !== b.obstacles[i].vertices.length) return false;
+        for (let j = 0; j < a.obstacles[i].vertices.length; j++) {
+            if (a.obstacles[i].vertices[j] !== b.obstacles[i].vertices[j]) {
+                return false;
+            }
+        }
+    }
+    
     return true;
 }
 
@@ -304,6 +329,7 @@ function clearSketch() {
     sketch.points = [];
     sketch.segments = [];
     sketch.polygons = [];
+    sketch.obstacles = [];
     sketch.orthoLines = [];
     isDrawing = false;
     previewPoint = null;
@@ -319,7 +345,15 @@ function clearSketch() {
     isDrawingOrthogonal = false;
     orthoStartIndex = null;
     orthoAddedPoints = [];
+    isDrawingPolygonObstacle = false;
+    obstacleVertices = [];
+    obstacleStartIndex = null;
+    obstacleAddedPoints = [];
+    isDrawingRectangleObstacle = false;
+    obstacleRectangleStartIndex = null;
+    obstacleRectangleAddedPoints = [];
     polygonDeletionCandidates = [];
+    obstacleDeletionCandidates = [];
     deletionCandidates = [];
     moveVertexCandidates = [];
     moveClosestEdge = null;
@@ -328,6 +362,8 @@ function clearSketch() {
     window.polygonBeforeState = null; // Clean up saved state
     window.rectangleBeforeState = null; // Clean up saved state
     window.orthoBeforeState = null; // Clean up saved state
+    window.obstacleBeforeState = null; // Clean up saved state
+    window.obstacleRectangleBeforeState = null; // Clean up saved state
     
     // Update cursor
     updateCanvasCursor();
