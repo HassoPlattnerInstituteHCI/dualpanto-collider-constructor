@@ -350,7 +350,7 @@ function handleVertexMoveInput(type, mm) {
             });
             
             // If we moved ortho junction points, update the stored bend coordinate
-            if (moveConstraintAxis && moveVertexCandidates.length === 2) {
+            if (moveConstraintAxis) {
                 const idx1 = moveVertexCandidates[0];
                 const idx2 = moveVertexCandidates[1];
                 const ol = getOrthoLineByPoint(idx1);
