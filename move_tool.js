@@ -437,6 +437,48 @@ function handleVertexMoveInput(type, mm) {
         }
     } else if (type === 'up') {
         if (isMovingVertex) {
+            // Update constraints for moved endpoints, then recalculate geometry
+            for (const idx of moveVertexCandidates) {
+                const orthoLines = getOrthoLinesForEndpoint(idx);
+                for (const ol of orthoLines) {
+                    const allExcludeSegs = [ol.seg1, ol.seg2, ol.seg3].filter(s => s !== undefined);
+                    const isStart = ol.startPoint === idx;
+                    const isEnd = ol.endPoint === idx;
+                    
+                    // Recalculate constraints only for the moved endpoint(s)
+                    // Pass all orthoLine segments to exclude to prevent self-detection
+                    if (isStart) {
+                        const constraintA = getConstraintFromExistingGeometry(
+                            sketch.points[ol.startPoint],
+                            null,
+                            null,
+                            allExcludeSegs
+                        );
+                        if (constraintA) {
+                            ol.forcedAxisA = constraintA.axis;
+                        } else {
+                            delete ol.forcedAxisA;
+                        }
+                    }
+                    if (isEnd) {
+                        const constraintB = getConstraintFromExistingGeometry(
+                            sketch.points[ol.endPoint],
+                            null,
+                            null,
+                            allExcludeSegs
+                        );
+                        if (constraintB) {
+                            ol.forcedAxisB = constraintB.axis;
+                        } else {
+                            delete ol.forcedAxisB;
+                        }
+                    }
+                    
+                    // Recalculate geometry with updated constraints
+                    updateOrthoLine(ol, true);
+                }
+            }
+            
             // Use the stored before state from when the drag started
             if (window.moveVertexBeforeState) {
                 recordSimpleAction(window.moveVertexBeforeState);

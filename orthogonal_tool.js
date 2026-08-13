@@ -7,14 +7,15 @@
  * @param {Object} point - The point to check {x, y}
  * @param {number} excludeSeg1 - Optional segment index to exclude from check
  * @param {number} excludeSeg2 - Optional second segment index to exclude from check
+ * @param {Array} excludeSegs - Optional array of segment indices to exclude from check
  * @returns {Object|null} - Returns {axis: 'x'|'y', coord: number} if point lies on a segment, null otherwise
  */
-function getConstraintFromExistingGeometry(point, excludeSeg1 = null, excludeSeg2 = null) {
+function getConstraintFromExistingGeometry(point, excludeSeg1 = null, excludeSeg2 = null, excludeSegs = []) {
     const threshold = getAdaptiveGridSpacing() * 0.1; // Small threshold for on-segment detection
     
     // Check all segments
     for (let i = 0; i < sketch.segments.length; i++) {
-        if (i === excludeSeg1 || i === excludeSeg2) continue;
+        if (i === excludeSeg1 || i === excludeSeg2 || excludeSegs.includes(i)) continue;
         
         const seg = sketch.segments[i];
         const p1 = sketch.points[seg.start];
@@ -116,8 +117,8 @@ function calculateOrthoGeometry(A, B, ol = null, userBendCoord = null, useStored
         // Determine constraint for each endpoint dynamically
         // If an endpoint lies on a single existing segment, it should be perpendicular to that segment
         const excludeSegs = ol ? [ol.seg1, ol.seg2, ol.seg3].filter(s => s !== undefined) : [];
-        const constraintA = getConstraintFromExistingGeometry(A, excludeSegs[0] || null, excludeSegs[1] || null);
-        const constraintB = getConstraintFromExistingGeometry(B, excludeSegs[0] || null, excludeSegs[1] || null);
+        const constraintA = getConstraintFromExistingGeometry(A, null, null, excludeSegs);
+        const constraintB = getConstraintFromExistingGeometry(B, null, null, excludeSegs);
         
         axisA = constraintA ? constraintA.axis : defaultAxis;
         axisB = constraintB ? constraintB.axis : defaultAxis;
@@ -230,8 +231,8 @@ function updateOrthoLine(ol, duringDrag = false) {
         // Only recalculate constraints if not during drag
         if (!duringDrag) {
             const excludeSegs = [ol.seg1, ol.seg2, ol.seg3].filter(s => s !== undefined);
-            const constraintA = getConstraintFromExistingGeometry(A, excludeSegs[0] || null, excludeSegs[1] || null);
-            const constraintB = getConstraintFromExistingGeometry(B, excludeSegs[0] || null, excludeSegs[1] || null);
+            const constraintA = getConstraintFromExistingGeometry(A, null, null, excludeSegs);
+            const constraintB = getConstraintFromExistingGeometry(B, null, null, excludeSegs);
             
             // Store forced axes if endpoints are on segments
             if (constraintA) {
@@ -548,9 +549,9 @@ function handleOrthogonalInput(type, snappedMM) {
             sketch.points.push({ x: snappedMM.x, y: snappedMM.y });
             orthoAddedPoints.push(endPointIndex);
             
-            // Check constraints for both endpoints (before adding new segments to exclude list)
-            const constraintA = getConstraintFromExistingGeometry(startPt);
-            const constraintB = getConstraintFromExistingGeometry(snappedMM);
+            // Check constraints for both endpoints (no segments to exclude yet as orthoLine doesn't exist)
+            const constraintA = getConstraintFromExistingGeometry(startPt, null, null, []);
+            const constraintB = getConstraintFromExistingGeometry(snappedMM, null, null, []);
             
             // Calculate geometry
             const geometry = calculateOrthoGeometry(startPt, snappedMM, null);
