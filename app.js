@@ -629,12 +629,21 @@ function setTool(toolName) {
     
     // Reset drawing states when switching tools
     if (toolName !== 'line') {
+        // Clean up line drawing - remove orphaned start point if any
+        if (isDrawing && newPointAdded) {
+            sketch.points.pop();
+        }
         isDrawing = false;
         previewPoint = null;
         startPointIndex = null;
         newPointAdded = false;
+        window.lineDrawBeforeState = null; // Clean up saved state
     }
     if (toolName !== 'polygon') {
+        // Clean up polygon drawing - remove orphaned points
+        if (isDrawingPolygon) {
+            removePolygonOrphanedPoints();
+        }
         isDrawingPolygon = false;
         polygonVertices = [];
         polygonStartIndex = null;
@@ -643,6 +652,10 @@ function setTool(toolName) {
         window.polygonBeforeState = null; // Clean up saved state
     }
     if (toolName !== 'rectangle') {
+        // Clean up rectangle drawing - remove orphaned points
+        if (isDrawingRectangle) {
+            removeRectangleOrphanedPoints();
+        }
         isDrawingRectangle = false;
         rectangleStartIndex = null;
         rectangleAddedPoints = [];
@@ -650,6 +663,10 @@ function setTool(toolName) {
         window.rectangleBeforeState = null; // Clean up saved state
     }
     if (toolName !== 'polygon_obstacle') {
+        // Clean up polygon obstacle drawing - remove orphaned points
+        if (isDrawingPolygonObstacle) {
+            removePolygonObstacleOrphanedPoints();
+        }
         isDrawingPolygonObstacle = false;
         obstacleVertices = [];
         obstacleStartIndex = null;
@@ -658,6 +675,10 @@ function setTool(toolName) {
         window.obstacleBeforeState = null; // Clean up saved state
     }
     if (toolName !== 'rectangle_obstacle') {
+        // Clean up rectangle obstacle drawing - remove orphaned points
+        if (isDrawingRectangleObstacle) {
+            removeRectangleObstacleOrphanedPoints();
+        }
         isDrawingRectangleObstacle = false;
         obstacleRectangleStartIndex = null;
         obstacleRectangleAddedPoints = [];
@@ -665,6 +686,10 @@ function setTool(toolName) {
         window.obstacleRectangleBeforeState = null; // Clean up saved state
     }
     if (toolName !== 'orthogonal') {
+        // Clean up orthogonal drawing - remove orphaned points
+        if (isDrawingOrthogonal) {
+            removeOrthogonalOrphanedPoints();
+        }
         isDrawingOrthogonal = false;
         orthoStartIndex = null;
         orthoAddedPoints = [];

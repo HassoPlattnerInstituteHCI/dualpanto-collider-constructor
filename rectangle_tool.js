@@ -39,6 +39,29 @@ function handleRectangleInput(type, snappedMM) {
             const minY = Math.min(startPt.y, endPt.y);
             const maxY = Math.max(startPt.y, endPt.y);
             
+            // Check if rectangle has zero area (both spanning points in same spot)
+            const rectWidth = maxX - minX;
+            const rectHeight = maxY - minY;
+            
+            // If rectangle has zero area, clean up and don't create it
+            if (rectWidth < 0.01 && rectHeight < 0.01) {
+                // Clean up orphaned points - they won't be referenced by any polygon
+                removeRectangleOrphanedPoints();
+                
+                // Clear the stored before state since we didn't create a rectangle
+                window.rectangleBeforeState = null;
+                
+                // Reset rectangle drawing state
+                isDrawingRectangle = false;
+                rectangleStartIndex = null;
+                rectangleAddedPoints = [];
+                previewPoint = null;
+                
+                drawCanvas();
+                updateStatus();
+                return;
+            }
+            
             // Create the four corners of the rectangle
             const cornerIndices = [];
             

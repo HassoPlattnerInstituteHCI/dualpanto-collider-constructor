@@ -415,26 +415,6 @@ function handleVertexMoveInput(type, mm) {
                 }
             }
             
-            // Check for overlapping vertices in all polygons containing moved vertices
-            const movedVertexSet = new Set(moveVertexCandidates);
-            for (let i = 0; i < sketch.polygons.length; i++) {
-                const poly = sketch.polygons[i];
-                let hasMovedVertex = false;
-                
-                // Check if this polygon has any moved vertices
-                for (const vIdx of poly.vertices) {
-                    if (movedVertexSet.has(vIdx)) {
-                        hasMovedVertex = true;
-                        break;
-                    }
-                }
-                
-                if (hasMovedVertex) {
-                    // Clean up overlapping vertices in this polygon
-                    sketch.polygons[i].vertices = removeOverlappingPolygonVertices(poly.vertices);
-                }
-            }
-            
             // Update constraints and geometry for orthoLines with moved endpoints
             for (const idx of moveVertexCandidates) {
                 const orthoLines = getOrthoLinesForEndpoint(idx);
@@ -444,10 +424,7 @@ function handleVertexMoveInput(type, mm) {
                 }
             }
             
-            // Clean up any zero-length segments created by orthoLine updates
-            // Note: zero-length segments belonging to orthoLines are preserved
-            cleanupZeroLengthSegments();
-            
+            // Note: cleanup of orphaned points now happens on mouse up, not during drag
             drawCanvas();
         } else {
             // Not dragging, just update candidates for highlighting
@@ -486,6 +463,75 @@ function handleVertexMoveInput(type, mm) {
                 window.moveVertexBeforeState = null;
                 updateStatus();
             }
+            
+            // Clean up overlapping vertices in polygons/obstacles that have moved vertices
+            // and delete any that have been collapsed to fewer than 3 vertices
+            const movedVertexSet = new Set(moveVertexCandidates);
+            const polygonsToDelete = [];
+            const obstaclesToDelete = [];
+            
+            for (let i = 0; i < sketch.polygons.length; i++) {
+                const poly = sketch.polygons[i];
+                let hasMovedVertex = false;
+                
+                // Check if this polygon has any moved vertices
+                for (const vIdx of poly.vertices) {
+                    if (movedVertexSet.has(vIdx)) {
+                        hasMovedVertex = true;
+                        break;
+                    }
+                }
+                
+                if (hasMovedVertex) {
+                    // Clean up overlapping vertices in this polygon
+                    sketch.polygons[i].vertices = removeOverlappingPolygonVertices(poly.vertices);
+                    
+                    // Check if polygon has been collapsed to fewer than 3 vertices
+                    if (sketch.polygons[i].vertices.length < 3) {
+                        polygonsToDelete.push(i);
+                    }
+                }
+            }
+            
+            for (let i = 0; i < sketch.obstacles.length; i++) {
+                const obstacle = sketch.obstacles[i];
+                let hasMovedVertex = false;
+                
+                // Check if this obstacle has any moved vertices
+                for (const vIdx of obstacle.vertices) {
+                    if (movedVertexSet.has(vIdx)) {
+                        hasMovedVertex = true;
+                        break;
+                    }
+                }
+                
+                if (hasMovedVertex) {
+                    // Clean up overlapping vertices in this obstacle
+                    sketch.obstacles[i].vertices = removeOverlappingPolygonVertices(obstacle.vertices);
+                    
+                    // Check if obstacle has been collapsed to fewer than 3 vertices
+                    if (sketch.obstacles[i].vertices.length < 3) {
+                        obstaclesToDelete.push(i);
+                    }
+                }
+            }
+            
+            // Delete collapsed polygons and obstacles directly
+            // (cleanupAllOrphanedPoints will handle the orphaned points)
+            if (polygonsToDelete.length > 0) {
+                sketch.polygons = sketch.polygons.filter((_, idx) => !polygonsToDelete.includes(idx));
+            }
+            if (obstaclesToDelete.length > 0) {
+                sketch.obstacles = sketch.obstacles.filter((_, idx) => !obstaclesToDelete.includes(idx));
+            }
+            
+            // Clean up zero-length segments created by moving vertices on top of each other
+            cleanupZeroLengthSegments();
+            
+            // Clean up all orphaned points (including from deleted polygons/obstacles,
+            // deleted zero-length segments, and from non-collapsed polygons that had
+            // overlapping vertices removed)
+            cleanupAllOrphanedPoints();
             
             isMovingVertex = false;
             dragStartMM = null;

@@ -358,6 +358,75 @@ function getSketchStats() {
     };
 }
 
+/**
+ * Remove all points that are not referenced by any segment, polygon, obstacle, or orthoLine.
+ * This is a general cleanup function that removes orphaned points from the sketch.
+ * Called when move tool mouse is released to clean up after vertex operations.
+ * @returns {boolean} true if any points were removed, false otherwise
+ */
+function cleanupAllOrphanedPoints() {
+    // Find all point indices used by existing elements
+    const usedPointIndices = new Set();
+    
+    sketch.segments.forEach(seg => {
+        usedPointIndices.add(seg.start);
+        usedPointIndices.add(seg.end);
+    });
+    sketch.polygons.forEach(poly => {
+        poly.vertices.forEach(vIdx => usedPointIndices.add(vIdx));
+    });
+    sketch.obstacles.forEach(obstacle => {
+        obstacle.vertices.forEach(vIdx => usedPointIndices.add(vIdx));
+    });
+    sketch.orthoLines.forEach(ol => {
+        if (ol.startPoint !== undefined) usedPointIndices.add(ol.startPoint);
+        if (ol.endPoint !== undefined) usedPointIndices.add(ol.endPoint);
+        if (ol.junction1 !== undefined) usedPointIndices.add(ol.junction1);
+        if (ol.junction2 !== undefined) usedPointIndices.add(ol.junction2);
+    });
+    
+    // Build new points array with only used points and create index mapping
+    const pointMap = new Map();
+    const newPoints = [];
+    let newIndex = 0;
+    
+    sketch.points.forEach((p, oldIndex) => {
+        if (usedPointIndices.has(oldIndex)) {
+            pointMap.set(oldIndex, newIndex);
+            newPoints.push(p);
+            newIndex++;
+        }
+    });
+    
+    // If no points were removed, return early
+    if (newPoints.length === sketch.points.length) {
+        return false;
+    }
+    
+    // Update sketch.points
+    sketch.points = newPoints;
+    
+    // Remap all references to point indices
+    sketch.segments.forEach(seg => {
+        seg.start = pointMap.get(seg.start);
+        seg.end = pointMap.get(seg.end);
+    });
+    sketch.polygons.forEach(poly => {
+        poly.vertices = poly.vertices.map(vIdx => pointMap.get(vIdx));
+    });
+    sketch.obstacles.forEach(obstacle => {
+        obstacle.vertices = obstacle.vertices.map(vIdx => pointMap.get(vIdx));
+    });
+    sketch.orthoLines.forEach(ol => {
+        if (ol.startPoint !== undefined) ol.startPoint = pointMap.get(ol.startPoint);
+        if (ol.endPoint !== undefined) ol.endPoint = pointMap.get(ol.endPoint);
+        if (ol.junction1 !== undefined) ol.junction1 = pointMap.get(ol.junction1);
+        if (ol.junction2 !== undefined) ol.junction2 = pointMap.get(ol.junction2);
+    });
+    
+    return true;
+}
+
 
 // ============================================
 // CANVAS DRAWING

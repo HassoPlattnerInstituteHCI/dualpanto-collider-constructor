@@ -504,7 +504,7 @@ button img {
     border-radius: 4px;
     font-size: 12px;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: background 0.2s, color 0.2s;
     background: #6c757d;
     color: white;
 }
@@ -524,6 +524,19 @@ button img {
 .sketch-button-group button:disabled {
     background: #cccccc;
     cursor: not-allowed;
+}
+
+/* Save button split design */
+#saveBtn + #saveAsNewBtn:not([hidden]) {
+    margin-left: -10px;
+    border-left: 1px solid rgba(255, 255, 255, 0.3);
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+}
+
+#saveBtn:has(+ #saveAsNewBtn:not([hidden])) {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
 }
 
 /* Modal Styles */
