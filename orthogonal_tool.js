@@ -183,15 +183,14 @@ function calculateOrthoGeometry(A, B, ol = null, userBendCoord = null, useStored
 /**
  * Update an orthogonal line's geometry after its endpoints have moved
  * @param {Object} ol - The orthoLine object to update
- * @param {boolean} duringDrag - If true, use stored forced axes instead of recalculating constraints
+ * @param {boolean} duringDrag - If true, use stored forced axes (constraints should be updated separately by caller)
  */
 function updateOrthoLine(ol, duringDrag = false) {
     const A = sketch.points[ol.startPoint];
     const B = sketch.points[ol.endPoint];
     const gridSpacing = getAdaptiveGridSpacing();
     
-    // Recalculate geometry
-    // If during drag, use stored forced axes; otherwise recalculate constraints
+    // Recalculate geometry using stored forced axes
     const geometry = calculateOrthoGeometry(A, B, ol, ol.userBendCoord, duringDrag);
     
     if (geometry.isStraight) {
@@ -226,35 +225,6 @@ function updateOrthoLine(ol, duringDrag = false) {
         ol.bendAxis = geometry.bendAxis;
         ol.bendCoord = geometry.bendCoord;
         ol.isStraight = false;
-        
-        // If axes differ (seg2 has zero length), reset userBendCoord
-        // Only recalculate constraints if not during drag
-        if (!duringDrag) {
-            const excludeSegs = [ol.seg1, ol.seg2, ol.seg3].filter(s => s !== undefined);
-            const constraintA = getConstraintFromExistingGeometry(A, null, null, excludeSegs);
-            const constraintB = getConstraintFromExistingGeometry(B, null, null, excludeSegs);
-            
-            // Store forced axes if endpoints are on segments
-            if (constraintA) {
-                ol.forcedAxisA = constraintA.axis;
-            } else {
-                delete ol.forcedAxisA;
-            }
-            if (constraintB) {
-                ol.forcedAxisB = constraintB.axis;
-            } else {
-                delete ol.forcedAxisB;
-            }
-            
-            // Reset userBendCoord if axes differ
-            const defaultAxis = (Math.max(A.x, B.x) - Math.min(A.x, B.x)) >= (Math.max(A.y, B.y) - Math.min(A.y, B.y)) ? 'x' : 'y';
-            const axisA = ol.forcedAxisA || defaultAxis;
-            const axisB = ol.forcedAxisB || defaultAxis;
-            
-            if (axisA !== axisB) {
-                ol.userBendCoord = null;
-            }
-        }
         
         // Update or create junction points
         const P = geometry.P;

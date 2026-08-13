@@ -1,4 +1,46 @@
 // ============================================
+// ORTHOGONAL LINE CONSTRAINT HELPERS
+// ============================================
+
+/**
+ * Update the forced axis constraint for an orthoLine based on a moved endpoint
+ * @param {Object} ol - The orthoLine object
+ * @param {number} movedPointIdx - The index of the point that was moved
+ */
+function updateOrthoLineConstraint(ol, movedPointIdx) {
+    const allExcludeSegs = [ol.seg1, ol.seg2, ol.seg3].filter(s => s !== undefined);
+    const isStart = ol.startPoint === movedPointIdx;
+    const isEnd = ol.endPoint === movedPointIdx;
+    
+    if (isStart) {
+        const constraintA = getConstraintFromExistingGeometry(
+            sketch.points[ol.startPoint],
+            null,
+            null,
+            allExcludeSegs
+        );
+        if (constraintA) {
+            ol.forcedAxisA = constraintA.axis;
+        } else {
+            delete ol.forcedAxisA;
+        }
+    }
+    if (isEnd) {
+        const constraintB = getConstraintFromExistingGeometry(
+            sketch.points[ol.endPoint],
+            null,
+            null,
+            allExcludeSegs
+        );
+        if (constraintB) {
+            ol.forcedAxisB = constraintB.axis;
+        } else {
+            delete ol.forcedAxisB;
+        }
+    }
+}
+
+// ============================================
 // MOVE VERTEX HELPERS
 // ============================================
 
@@ -397,38 +439,7 @@ function handleVertexMoveInput(type, mm) {
             for (const idx of moveVertexCandidates) {
                 const orthoLines = getOrthoLinesForEndpoint(idx);
                 for (const ol of orthoLines) {
-                    const allExcludeSegs = [ol.seg1, ol.seg2, ol.seg3].filter(s => s !== undefined);
-                    const isStart = ol.startPoint === idx;
-                    const isEnd = ol.endPoint === idx;
-                    
-                    // Recalculate constraints only for the moved endpoint(s)
-                    if (isStart) {
-                        const constraintA = getConstraintFromExistingGeometry(
-                            sketch.points[ol.startPoint],
-                            null,
-                            null,
-                            allExcludeSegs
-                        );
-                        if (constraintA) {
-                            ol.forcedAxisA = constraintA.axis;
-                        } else {
-                            delete ol.forcedAxisA;
-                        }
-                    }
-                    if (isEnd) {
-                        const constraintB = getConstraintFromExistingGeometry(
-                            sketch.points[ol.endPoint],
-                            null,
-                            null,
-                            allExcludeSegs
-                        );
-                        if (constraintB) {
-                            ol.forcedAxisB = constraintB.axis;
-                        } else {
-                            delete ol.forcedAxisB;
-                        }
-                    }
-                    
+                    updateOrthoLineConstraint(ol, idx);
                     updateOrthoLine(ol, true); // duringDrag = true
                 }
             }
@@ -469,14 +480,6 @@ function handleVertexMoveInput(type, mm) {
         }
     } else if (type === 'up') {
         if (isMovingVertex) {
-            // Update geometry for orthoLines with moved endpoints (constraints already updated in 'move' handler)
-            for (const idx of moveVertexCandidates) {
-                const orthoLines = getOrthoLinesForEndpoint(idx);
-                for (const ol of orthoLines) {
-                    updateOrthoLine(ol, true); // duringDrag = true
-                }
-            }
-            
             // Use the stored before state from when the drag started
             if (window.moveVertexBeforeState) {
                 recordSimpleAction(window.moveVertexBeforeState);
